@@ -31,5 +31,8 @@ class BenchmarkRun(SQLModel, table=True):
     config_json: Optional[str] = Field(default=None)
     progress_total: int = Field(default=0)
     progress_done: int = Field(default=0)
+    current_phase: Optional[str] = Field(default=None, description="generation | judging | finalizing | done")
+    current_activity: Optional[str] = Field(default=None, description="Human-readable description of what is happening right now")
+    export_path: Optional[str] = Field(default=None, description="Filesystem path to the most recent CSV export")
     error: Optional[str] = Field(default=None)
     notes: Optional[str] = Field(default=None)

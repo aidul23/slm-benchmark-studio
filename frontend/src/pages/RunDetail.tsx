@@ -25,6 +25,7 @@ import { useAsync } from "../hooks/useAsync";
 import type { ResultRow } from "../types";
 import ScoreBarChart from "../components/charts/ScoreBarChart";
 import LatencyBarChart from "../components/charts/LatencyBarChart";
+import ProgressPanel from "../components/ProgressPanel";
 
 export default function RunDetail() {
   const params = useParams();
@@ -42,15 +43,21 @@ export default function RunDetail() {
   const [active, setActive] = useState<ResultRow | null>(null);
 
   // Poll while the run is in progress so the UI updates without manual refresh.
+  // The run object refreshes faster than the heavier results/summary queries.
   useEffect(() => {
     if (!run.data) return;
     if (run.data.status !== "running" && run.data.status !== "pending") return;
-    const handle = window.setInterval(() => {
+    const fastHandle = window.setInterval(() => {
       void run.reload();
+    }, 1000);
+    const slowHandle = window.setInterval(() => {
       void summary.reload();
       void results.reload();
-    }, 2500);
-    return () => window.clearInterval(handle);
+    }, 4000);
+    return () => {
+      window.clearInterval(fastHandle);
+      window.clearInterval(slowHandle);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.data?.status]);
 
@@ -116,11 +123,10 @@ export default function RunDetail() {
           </Button>
           <a
             href={exportRunCsvUrl(id)}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-100"
+            download
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-700"
           >
-            Export CSV
+            <DownloadIcon /> Download full CSV
           </a>
           {run.data && run.data.status !== "running" && (
             <Button size="sm" onClick={() => void startRun(id).then(() => run.reload())}>
@@ -133,14 +139,28 @@ export default function RunDetail() {
       {run.loading && <LoadingState />}
       {run.error && <ErrorState message={run.error} />}
 
+      {run.data && <ProgressPanel run={run.data} />}
+
+      {run.data?.status === "completed" && run.data.export_path && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-medium">Full results CSV saved on disk</div>
+              <div className="mt-0.5 font-mono text-xs text-emerald-700">{run.data.export_path}</div>
+            </div>
+            <a
+              href={exportRunCsvUrl(id)}
+              download
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+            >
+              <DownloadIcon /> Download a fresh copy
+            </a>
+          </div>
+        </div>
+      )}
+
       {run.data && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat
-            label="Progress"
-            value={`${run.data.progress_done} / ${run.data.progress_total}`}
-            hint={run.data.status === "running" ? "Running…" : run.data.status}
-            tone={run.data.status === "completed" ? "good" : run.data.status === "failed" ? "warning" : "default"}
-          />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Stat label="Examples" value={summary.data?.total_examples ?? "—"} />
           <Stat
             label="Outputs"
@@ -474,6 +494,24 @@ function Section({
         {body}
       </pre>
     </div>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M12 15V3" />
+    </svg>
   );
 }
 

@@ -34,6 +34,9 @@ class RunRead(BaseModel):
     completed_at: Optional[datetime] = None
     progress_total: int
     progress_done: int
+    current_phase: Optional[str] = None
+    current_activity: Optional[str] = None
+    export_path: Optional[str] = None
     error: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
     notes: Optional[str] = None

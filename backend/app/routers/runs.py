@@ -43,6 +43,9 @@ def _to_read(run: BenchmarkRun) -> RunRead:
         completed_at=run.completed_at,
         progress_total=run.progress_total,
         progress_done=run.progress_done,
+        current_phase=run.current_phase,
+        current_activity=run.current_activity,
+        export_path=run.export_path,
         error=run.error,
         config=config,
         notes=run.notes,
@@ -124,6 +127,9 @@ def start_run(
     run.status = RunStatus.PENDING
     run.error = None
     run.progress_done = 0
+    run.current_phase = None
+    run.current_activity = "Queued"
+    run.export_path = None
     session.add(run)
     session.commit()
     session.refresh(run)

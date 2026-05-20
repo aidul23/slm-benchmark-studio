@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     default_timeout_seconds: int = 300
     default_temperature: float = 0.2
     default_max_tokens: int = 512
+    exports_dir: str = "../data/exports"
 
     @property
     def cors_origins_list(self) -> List[str]:
