@@ -1,0 +1,37 @@
+version: "3.9"
+
+# Reference compose file for running Ollama alongside the Studio.
+# The backend and frontend usually run directly on the host during development,
+# but you can start Ollama with `docker compose up ollama` if you prefer.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: slm-studio-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
+  backend:
+    profiles: ["full"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: slm-studio-backend
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      DATABASE_URL: sqlite:////data/slm_benchmark.db
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+    volumes:
+      - backend_data:/data
+    depends_on:
+      - ollama
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
+  backend_data:
