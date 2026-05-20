@@ -59,12 +59,40 @@ export default function Layout() {
           <div className="font-semibold">SLM Benchmark Studio</div>
         </header>
         <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-7xl px-6 py-8">
-            <Outlet />
+          <div className="mx-auto flex min-h-full w-full max-w-7xl flex-col px-6 py-8">
+            <div className="flex-1">
+              <Outlet />
+            </div>
+            <Footer />
           </div>
         </main>
       </div>
     </div>
+  );
+}
+
+function Footer() {
+  const now = new Date();
+  const dateLabel = now.toLocaleDateString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  return (
+    <footer className="mt-10 border-t border-ink-200 pt-4 pb-6 text-xs text-ink-500">
+      <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
+        <div>
+          <span className="font-medium text-ink-700">SLM Benchmark Studio</span>
+          <span className="mx-2 text-ink-300">·</span>
+          <span>{dateLabel}</span>
+        </div>
+        <div>
+          © {now.getFullYear()} Built by{" "}
+          <span className="font-semibold text-ink-700">Md Aidul Islam</span>
+        </div>
+      </div>
+    </footer>
   );
 }
 

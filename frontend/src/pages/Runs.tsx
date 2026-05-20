@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { listDatasets } from "../api/datasets";
@@ -55,6 +55,19 @@ export default function Runs() {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const availableModels = useMemo(() => models.data?.models ?? [], [models.data]);
+
+  const hasActiveRun = useMemo(
+    () => (runs.data ?? []).some((r) => r.status === "running" || r.status === "pending"),
+    [runs.data],
+  );
+
+  // Poll the runs list while any run is active so the bars update live.
+  useEffect(() => {
+    if (!hasActiveRun) return;
+    const handle = window.setInterval(() => void runs.reload(), 1500);
+    return () => window.clearInterval(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasActiveRun]);
 
   async function refreshAll() {
     await Promise.all([datasets.reload(), prompts.reload(), models.reload(), runs.reload()]);
@@ -309,7 +322,37 @@ export default function Runs() {
                   </td>
                   <td className="px-2 py-3"><StatusBadge status={run.status} /></td>
                   <td className="px-2 py-3 text-xs text-ink-600">
-                    {run.progress_done}/{run.progress_total}
+                    <div className="flex items-center justify-between gap-2">
+                      <span>
+                        {run.progress_done}/{run.progress_total}
+                      </span>
+                      <span className="font-medium">
+                        {run.progress_total
+                          ? `${Math.round((run.progress_done / run.progress_total) * 100)}%`
+                          : "—"}
+                      </span>
+                    </div>
+                    <div className="mt-1 h-1.5 w-32 overflow-hidden rounded-full bg-ink-100">
+                      <div
+                        className={
+                          run.status === "failed"
+                            ? "h-full bg-red-500"
+                            : run.status === "completed"
+                              ? "h-full bg-emerald-500"
+                              : "h-full bg-accent-600"
+                        }
+                        style={{
+                          width: run.progress_total
+                            ? `${Math.min(100, (run.progress_done / run.progress_total) * 100)}%`
+                            : "0%",
+                        }}
+                      />
+                    </div>
+                    {run.current_activity && run.status === "running" && (
+                      <div className="mt-1 truncate font-mono text-[10px] text-ink-400">
+                        {run.current_activity}
+                      </div>
+                    )}
                     {run.error && <div className="mt-1 text-red-600">{run.error}</div>}
                   </td>
                   <td className="px-2 py-3 text-right">

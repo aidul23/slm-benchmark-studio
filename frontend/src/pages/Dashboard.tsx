@@ -89,27 +89,44 @@ export default function Dashboard() {
               />
             ) : (
               <ul className="divide-y divide-ink-100">
-                {data.recent_runs.map((run) => (
-                  <li key={run.id} className="flex items-center justify-between py-3">
-                    <div>
-                      <Link
-                        to={`/runs/${run.id}`}
-                        className="text-sm font-medium text-ink-800 hover:text-accent-700"
-                      >
-                        {run.name}
-                      </Link>
-                      <div className="text-xs text-ink-500">
-                        {run.created_at ? new Date(run.created_at).toLocaleString() : "—"}
+                {data.recent_runs.map((run) => {
+                  const pct = run.progress_total
+                    ? Math.min(100, (run.progress_done / run.progress_total) * 100)
+                    : 0;
+                  return (
+                    <li key={run.id} className="flex items-center justify-between gap-4 py-3">
+                      <div className="min-w-0 flex-1">
+                        <Link
+                          to={`/runs/${run.id}`}
+                          className="text-sm font-medium text-ink-800 hover:text-accent-700"
+                        >
+                          {run.name}
+                        </Link>
+                        <div className="text-xs text-ink-500">
+                          {run.created_at ? new Date(run.created_at).toLocaleString() : "—"}
+                        </div>
+                        <div className="mt-1 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-ink-100">
+                          <div
+                            className={
+                              run.status === "failed"
+                                ? "h-full bg-red-500"
+                                : run.status === "completed"
+                                  ? "h-full bg-emerald-500"
+                                  : "h-full bg-accent-600"
+                            }
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Badge tone="neutral">
-                        {run.progress_done}/{run.progress_total}
-                      </Badge>
-                      <StatusBadge status={run.status} />
-                    </div>
-                  </li>
-                ))}
+                      <div className="flex items-center gap-3">
+                        <Badge tone="neutral">
+                          {run.progress_done}/{run.progress_total}
+                        </Badge>
+                        <StatusBadge status={run.status} />
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Card>

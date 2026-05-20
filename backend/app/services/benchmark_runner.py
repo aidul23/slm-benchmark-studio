@@ -4,12 +4,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from sqlmodel import select
+from tqdm import tqdm
 
+from ..config import get_settings
 from ..database import session_scope
 from ..models.benchmark_run import BenchmarkRun, RunStatus
 from ..models.example import DatasetExample
@@ -17,6 +22,7 @@ from ..models.judge_score import JudgeScore
 from ..models.model_output import ModelOutput
 from ..models.prompt_template import PromptTemplate
 from . import prompt_renderer
+from .export_service import run_results_to_csv
 from .judge_runner import JudgeRunner
 from .ollama_client import OllamaClient, OllamaError
 
@@ -29,6 +35,7 @@ class _ExampleSnapshot:
     """Plain-Python snapshot of an example so we can use it after a session closes."""
 
     id: int
+    external_id: Optional[str]
     input: str
     reference: Optional[str]
     category: Optional[str]
@@ -39,7 +46,8 @@ class BenchmarkRunner:
     """Runs a benchmark end-to-end.
 
     Designed to be invoked via FastAPI background task. Each model/example error is captured
-    so a single failure never breaks the whole run.
+    so a single failure never breaks the whole run. Progress is written both to the database
+    (for the UI) and to a tqdm bar on the backend's terminal.
     """
 
     def __init__(self, ollama: Optional[OllamaClient] = None) -> None:
@@ -55,6 +63,8 @@ class BenchmarkRunner:
                 if run is not None:
                     run.status = RunStatus.FAILED
                     run.error = str(exc)
+                    run.current_phase = "failed"
+                    run.current_activity = f"Error: {exc}"
                     run.completed_at = datetime.utcnow()
                     session.add(run)
 
@@ -69,11 +79,14 @@ class BenchmarkRunner:
             config = json.loads(run.config_json) if run.config_json else {}
             models: List[str] = json.loads(run.selected_models_json or "[]")
             judge_model = run.judge_model
+            run_name = run.name
 
             template = session.get(PromptTemplate, run.prompt_template_id)
             if template is None:
                 run.status = RunStatus.FAILED
                 run.error = "Prompt template not found"
+                run.current_phase = "failed"
+                run.current_activity = "Prompt template missing"
                 run.completed_at = datetime.utcnow()
                 session.add(run)
                 return
@@ -84,6 +97,8 @@ class BenchmarkRunner:
             if not example_rows:
                 run.status = RunStatus.FAILED
                 run.error = "Dataset has no examples"
+                run.current_phase = "failed"
+                run.current_activity = "Dataset is empty"
                 run.completed_at = datetime.utcnow()
                 session.add(run)
                 return
@@ -91,6 +106,7 @@ class BenchmarkRunner:
             examples: List[_ExampleSnapshot] = [
                 _ExampleSnapshot(
                     id=row.id or 0,
+                    external_id=row.external_id,
                     input=row.input,
                     reference=row.reference,
                     category=row.category,
@@ -108,14 +124,39 @@ class BenchmarkRunner:
             run.progress_total = len(examples) * len(models)
             run.progress_done = 0
             run.error = None
+            run.current_phase = "generation"
+            run.current_activity = "Starting generation phase…"
+            run.export_path = None
             session.add(run)
 
         temperature = float(config.get("temperature", 0.2))
         max_tokens = int(config.get("max_tokens", 512))
 
+        logger.info(
+            "Run #%s '%s' started: %d models × %d examples = %d outputs",
+            run_id,
+            run_name,
+            len(models),
+            len(examples),
+            len(models) * len(examples),
+        )
+
         # ---- Phase 2: generation across every (model, example) pair.
-        for model_name in models:
-            for example in examples:
+        pairs = [(m, e) for m in models for e in examples]
+        pbar = tqdm(
+            total=len(pairs),
+            desc=f"[run {run_id}] generation",
+            unit="output",
+            file=sys.stdout,
+            dynamic_ncols=True,
+            leave=True,
+        )
+        try:
+            for model_name, example in pairs:
+                short_id = example.external_id or f"#{example.id}"
+                activity = f"generation · {model_name} · {short_id}"
+                pbar.set_postfix_str(f"{model_name} · {short_id}", refresh=False)
+                self._update_activity(run_id, phase="generation", activity=activity)
                 await self._run_single(
                     run_id=run_id,
                     model_name=model_name,
@@ -124,18 +165,29 @@ class BenchmarkRunner:
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
+                pbar.update(1)
+        finally:
+            pbar.close()
 
         # ---- Phase 3: optional judge phase.
         if judge_model:
             await self._run_judge_phase(run_id=run_id, judge_model=judge_model)
 
-        # ---- Phase 4: finalize.
+        # ---- Phase 4: finalize + auto-export.
+        self._update_activity(run_id, phase="finalizing", activity="Writing CSV export…")
+        export_path = self._write_export(run_id, run_name)
+
         with session_scope() as session:
             run = session.get(BenchmarkRun, run_id)
             if run is not None:
                 run.status = RunStatus.COMPLETED
                 run.completed_at = datetime.utcnow()
+                run.current_phase = "done"
+                run.current_activity = "Completed"
+                run.export_path = export_path
                 session.add(run)
+
+        logger.info("Run #%s completed. Export: %s", run_id, export_path or "(none)")
 
     async def _run_single(
         self,
@@ -239,6 +291,9 @@ class BenchmarkRunner:
                 jobs.append(
                     {
                         "output_id": item.id,
+                        "model_name": item.model_name,
+                        "external_id": example.external_id if example else None,
+                        "example_id": item.example_id,
                         "input": item.input,
                         "reference": item.reference,
                         "output": item.output,
@@ -247,31 +302,96 @@ class BenchmarkRunner:
                     }
                 )
 
-        for job in jobs:
-            verdict = await judge.judge(
-                model=judge_model,
-                input_text=job["input"],
-                reference=job["reference"],
-                candidate=job["output"],
-                category=job["category"],
-                difficulty=job["difficulty"],
-            )
-            with session_scope() as session:
-                session.add(
-                    JudgeScore(
-                        model_output_id=job["output_id"],
-                        judge_model=judge_model,
-                        correctness=verdict.correctness,
-                        factuality=verdict.factuality,
-                        completeness=verdict.completeness,
-                        conciseness=verdict.conciseness,
-                        instruction_following=verdict.instruction_following,
-                        overall=verdict.overall,
-                        reason=verdict.reason,
-                        raw_judge_output=verdict.raw,
-                        parse_error=verdict.parse_error,
-                    )
+        if not jobs:
+            return
+
+        self._update_activity(run_id, phase="judging", activity=f"Judging with {judge_model}…")
+        pbar = tqdm(
+            total=len(jobs),
+            desc=f"[run {run_id}] judging",
+            unit="score",
+            file=sys.stdout,
+            dynamic_ncols=True,
+            leave=True,
+        )
+        try:
+            for job in jobs:
+                short_id = job["external_id"] or f"#{job['example_id']}"
+                activity = f"judging · {job['model_name']} · {short_id} → {judge_model}"
+                pbar.set_postfix_str(f"{job['model_name']} · {short_id}", refresh=False)
+                self._update_activity(run_id, phase="judging", activity=activity)
+
+                verdict = await judge.judge(
+                    model=judge_model,
+                    input_text=job["input"],
+                    reference=job["reference"],
+                    candidate=job["output"],
+                    category=job["category"],
+                    difficulty=job["difficulty"],
                 )
+                with session_scope() as session:
+                    session.add(
+                        JudgeScore(
+                            model_output_id=job["output_id"],
+                            judge_model=judge_model,
+                            correctness=verdict.correctness,
+                            factuality=verdict.factuality,
+                            completeness=verdict.completeness,
+                            conciseness=verdict.conciseness,
+                            instruction_following=verdict.instruction_following,
+                            overall=verdict.overall,
+                            reason=verdict.reason,
+                            raw_judge_output=verdict.raw,
+                            parse_error=verdict.parse_error,
+                        )
+                    )
+                pbar.update(1)
+        finally:
+            pbar.close()
+
+    @staticmethod
+    def _update_activity(run_id: int, *, phase: str, activity: str) -> None:
+        """Mirror tqdm state to the database so the frontend can show it."""
+        with session_scope() as session:
+            run = session.get(BenchmarkRun, run_id)
+            if run is not None:
+                run.current_phase = phase
+                run.current_activity = activity
+                session.add(run)
+
+    @staticmethod
+    def _write_export(run_id: int, run_name: str) -> Optional[str]:
+        """Write a CSV with every output + judge score to the exports directory."""
+        settings = get_settings()
+        exports_dir = Path(settings.exports_dir).expanduser()
+        if not exports_dir.is_absolute():
+            exports_dir = (Path.cwd() / exports_dir).resolve()
+        try:
+            exports_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.warning("Could not create exports dir %s: %s", exports_dir, exc)
+            return None
+
+        with session_scope() as session:
+            try:
+                payload = run_results_to_csv(session, run_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to build CSV for run %s: %s", run_id, exc)
+                return None
+
+        if not payload:
+            return None
+
+        safe_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in run_name)[:48]
+        timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        filename = f"run_{run_id}_{safe_name or 'run'}_{timestamp}.csv"
+        path = exports_dir / filename
+        try:
+            path.write_bytes(payload)
+        except OSError as exc:
+            logger.warning("Failed to write export %s: %s", path, exc)
+            return None
+        return str(path)
 
 
 async def start_run_background(run_id: int) -> None:

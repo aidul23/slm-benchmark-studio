@@ -34,6 +34,42 @@ def init_db() -> None:
     )
 
     SQLModel.metadata.create_all(engine)
+    _run_lightweight_migrations()
+
+
+def _run_lightweight_migrations() -> None:
+    """Add new nullable columns to existing tables.
+
+    `SQLModel.metadata.create_all` only creates missing tables — it does not alter
+    existing ones. For the small number of columns we add over time, a `PRAGMA
+    table_info` + `ALTER TABLE` approach keeps existing SQLite databases working.
+    """
+    if not _settings.database_url.startswith("sqlite"):
+        return
+
+    additions = {
+        "benchmark_runs": [
+            ("current_phase", "TEXT"),
+            ("current_activity", "TEXT"),
+            ("export_path", "TEXT"),
+        ],
+    }
+
+    with engine.connect() as conn:
+        for table, columns in additions.items():
+            try:
+                existing_rows = conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+            except Exception:
+                continue
+            existing = {row[1] for row in existing_rows}
+            for name, column_type in columns:
+                if name in existing:
+                    continue
+                try:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {column_type}")
+                except Exception:
+                    pass
+        conn.commit()
 
 
 def get_session() -> Iterator[Session]:

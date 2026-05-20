@@ -66,6 +66,9 @@ export interface BenchmarkRun {
   completed_at?: string | null;
   progress_total: number;
   progress_done: number;
+  current_phase?: string | null;
+  current_activity?: string | null;
+  export_path?: string | null;
   error?: string | null;
   config?: Record<string, unknown> | null;
   notes?: string | null;

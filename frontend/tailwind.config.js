@@ -36,6 +36,19 @@ export default {
         ],
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"],
       },
+      backgroundImage: {
+        "progress-stripes":
+          "linear-gradient(135deg, rgba(255,255,255,0.25) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.25) 50%, rgba(255,255,255,0.25) 75%, transparent 75%, transparent)",
+      },
+      keyframes: {
+        "stripe-shift": {
+          "0%": { backgroundPosition: "0 0" },
+          "100%": { backgroundPosition: "1rem 0" },
+        },
+      },
+      animation: {
+        "stripe-shift": "stripe-shift 1s linear infinite",
+      },
     },
   },
   plugins: [],
