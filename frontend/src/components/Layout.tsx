@@ -89,7 +89,7 @@ function Footer() {
         </div>
         <div>
           © {now.getFullYear()} Built by{" "}
-          <span className="font-semibold text-ink-700">Md Aidul Islam</span>
+          <span className="font-semibold text-ink-700"><a target="_blank" href="https://aidul23.github.io/aidulislam/">Md Aidul Islam</a> & <a target="_blank" href="https://mahade315.github.io/">Md Mahade Hasan</a></span>
         </div>
       </div>
     </footer>
