@@ -1,3 +1,12 @@
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend-green)
+![React](https://img.shields.io/badge/React-Frontend-blue)
+![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue)
+![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-black)
+![SQLite](https://img.shields.io/badge/Database-SQLite-lightgrey)
+![Status](https://img.shields.io/badge/Status-Active-brightgreen)
+
 # SLM Benchmark Studio
 
 A local-first benchmarking platform for small language models served by [Ollama](https://ollama.com/). It implements the iterative loop:
@@ -164,7 +173,3 @@ docker compose --profile full up --build  # Ollama + backend
 - Pull-from-HuggingFace dataset import
 - Cross-run diffing in the Refinement page
 - Multi-judge ensembling
-
-## License
-
-MIT
