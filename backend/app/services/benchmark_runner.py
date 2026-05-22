@@ -17,15 +17,18 @@ from tqdm import tqdm
 from ..config import get_settings
 from ..database import session_scope
 from ..models.benchmark_run import BenchmarkRun, RunStatus
+from ..models.benchmark_score import BenchmarkScore
 from ..models.example import DatasetExample
 from ..models.judge_score import JudgeScore
 from ..models.model_output import ModelOutput
 from ..models.prompt_template import PromptTemplate
+from ..utils.jsonl import metadata_from_json
 from . import prompt_renderer
 from .export_service import run_results_to_csv
 from .judge_runner import JudgeRunner
 from .ollama_client import OllamaClient, OllamaError
 from .providers import get_provider
+from .scorers import ScorerContext, get_scorer
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +44,17 @@ class _ExampleSnapshot:
     reference: Optional[str]
     category: Optional[str]
     difficulty: Optional[str]
+    metadata: Dict[str, Any]
+
+    @property
+    def task_type(self) -> Optional[str]:
+        value = self.metadata.get("task_type") if self.metadata else None
+        return str(value).strip().lower() if isinstance(value, str) and value.strip() else None
+
+    @property
+    def benchmark(self) -> Optional[str]:
+        value = self.metadata.get("benchmark") if self.metadata else None
+        return str(value).strip().lower() if isinstance(value, str) and value.strip() else None
 
 
 class BenchmarkRunner:
@@ -132,6 +146,7 @@ class BenchmarkRunner:
                     reference=row.reference,
                     category=row.category,
                     difficulty=row.difficulty,
+                    metadata=metadata_from_json(row.metadata_json) or {},
                 )
                 for row in example_rows
             ]
@@ -190,7 +205,14 @@ class BenchmarkRunner:
         finally:
             pbar.close()
 
-        # ---- Phase 3: optional judge phase.
+        # ---- Phase 3a: deterministic benchmark scoring (MMLU / HellaSwag / …).
+        # Runs whenever any example carries a `task_type` (e.g. "mcq") in its
+        # metadata — independent of whether an LLM judge is configured. This
+        # lets users evaluate against a structured benchmark without paying
+        # for any LLM-as-judge calls.
+        await self._run_benchmark_scoring_phase(run_id=run_id, examples=examples)
+
+        # ---- Phase 3b: optional LLM judge phase.
         if judge_model:
             await self._run_judge_phase(
                 run_id=run_id,
@@ -295,6 +317,128 @@ class BenchmarkRunner:
             if run is not None:
                 run.progress_done = min(run.progress_done + 1, run.progress_total)
                 session.add(run)
+
+    async def _run_benchmark_scoring_phase(
+        self,
+        *,
+        run_id: int,
+        examples: List[_ExampleSnapshot],
+    ) -> None:
+        """Apply deterministic scorers to outputs that come from typed benchmarks.
+
+        Looks at `metadata.task_type` on each example to decide whether a scorer
+        applies. Skips silently when no example has a recognized task_type, so
+        ordinary free-form datasets (which only have an LLM judge) are unaffected.
+        """
+        examples_by_id = {e.id: e for e in examples if e.task_type}
+        if not examples_by_id:
+            return
+
+        # Snapshot the work to do (outputs without a benchmark score yet),
+        # then iterate without holding a session.
+        jobs: List[Dict[str, Any]] = []
+        with session_scope() as session:
+            existing_ids = {
+                row.model_output_id
+                for row in session.exec(select(BenchmarkScore)).all()
+            }
+            outputs = session.exec(
+                select(ModelOutput).where(ModelOutput.run_id == run_id)
+            ).all()
+            for item in outputs:
+                if item.id is None or item.id in existing_ids:
+                    continue
+                example = examples_by_id.get(item.example_id)
+                if example is None:
+                    continue
+                jobs.append(
+                    {
+                        "output_id": item.id,
+                        "model_name": item.model_name,
+                        "external_id": example.external_id,
+                        "example_id": item.example_id,
+                        "candidate": item.output,
+                        "reference": item.reference,
+                        "task_type": example.task_type,
+                        "benchmark": example.benchmark or "custom",
+                        "metadata": example.metadata,
+                        "error": item.error,
+                    }
+                )
+
+        if not jobs:
+            return
+
+        self._update_activity(
+            run_id,
+            phase="benchmark_scoring",
+            activity=f"Scoring {len(jobs)} outputs with deterministic scorers…",
+        )
+        pbar = tqdm(
+            total=len(jobs),
+            desc=f"[run {run_id}] benchmark",
+            unit="score",
+            file=sys.stdout,
+            dynamic_ncols=True,
+            leave=True,
+        )
+        try:
+            for job in jobs:
+                short_id = job["external_id"] or f"#{job['example_id']}"
+                activity = f"benchmark · {job['model_name']} · {short_id} ({job['benchmark']})"
+                pbar.set_postfix_str(f"{job['model_name']} · {short_id}", refresh=False)
+                self._update_activity(run_id, phase="benchmark_scoring", activity=activity)
+
+                scorer = get_scorer(job["task_type"])
+                with session_scope() as session:
+                    if scorer is None:
+                        session.add(
+                            BenchmarkScore(
+                                model_output_id=job["output_id"],
+                                benchmark=job["benchmark"],
+                                task_type=job["task_type"],
+                                scorer="unknown",
+                                parse_error=f"no scorer registered for task_type '{job['task_type']}'",
+                            )
+                        )
+                    elif job["error"]:
+                        # Generation failed → record a parse error so the row
+                        # still shows up in summaries but does not count as wrong.
+                        session.add(
+                            BenchmarkScore(
+                                model_output_id=job["output_id"],
+                                benchmark=job["benchmark"],
+                                task_type=job["task_type"],
+                                scorer="skipped",
+                                parse_error=f"upstream generation error: {job['error']}",
+                            )
+                        )
+                    else:
+                        ctx = ScorerContext(
+                            task_type=job["task_type"],
+                            benchmark=job["benchmark"],
+                            candidate=job["candidate"],
+                            reference=job["reference"],
+                            metadata=job["metadata"],
+                        )
+                        result = scorer(ctx)
+                        session.add(
+                            BenchmarkScore(
+                                model_output_id=job["output_id"],
+                                benchmark=job["benchmark"],
+                                task_type=job["task_type"],
+                                scorer=result.scorer,
+                                predicted=result.predicted,
+                                expected=result.expected,
+                                is_correct=result.is_correct,
+                                score=result.score,
+                                parse_error=result.parse_error,
+                                raw_extract=result.raw_extract,
+                            )
+                        )
+                pbar.update(1)
+        finally:
+            pbar.close()
 
     async def _run_judge_phase(
         self,

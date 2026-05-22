@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from ..database import get_session
 from ..models.benchmark_run import BenchmarkRun, RunStatus
+from ..models.benchmark_score import BenchmarkScore
 from ..models.dataset import Dataset
 from ..models.judge_score import JudgeScore
 from ..models.model_output import ModelOutput
@@ -199,6 +200,8 @@ def delete_run(run_id: int, session: Session = Depends(get_session)) -> dict:
     if output_ids:
         for score in session.exec(select(JudgeScore).where(JudgeScore.model_output_id.in_(output_ids))):  # type: ignore[arg-type]
             session.delete(score)
+        for bscore in session.exec(select(BenchmarkScore).where(BenchmarkScore.model_output_id.in_(output_ids))):  # type: ignore[arg-type]
+            session.delete(bscore)
     for output in outputs:
         session.delete(output)
     session.delete(run)

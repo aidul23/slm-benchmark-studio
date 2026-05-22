@@ -56,6 +56,33 @@ export default function Dashboard() {
             />
           </div>
 
+          {data.best_per_benchmark.length > 0 && (
+            <Card
+              title="Best model per benchmark"
+              description="Deterministic A/B/C/D accuracy, pooled across every run that touched each benchmark."
+            >
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
+                {data.best_per_benchmark.map((b) => (
+                  <div
+                    key={b.benchmark}
+                    className="rounded-xl border border-ink-100 bg-ink-50 px-4 py-3"
+                  >
+                    <div className="text-xs font-medium uppercase tracking-wide text-ink-500">
+                      {benchmarkLabel(b.benchmark)}
+                    </div>
+                    <div className="mt-1 font-mono text-sm text-ink-900">{b.model_name}</div>
+                    <div className="mt-1 text-base font-semibold text-emerald-600">
+                      {b.accuracy != null ? `${(b.accuracy * 100).toFixed(1)}%` : "—"}
+                      <span className="ml-1 text-xs font-normal text-ink-500">
+                        ({b.count} items)
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <Card title="Average overall score by model" description="Across all completed runs">
               {data.by_model.length === 0 ? (
@@ -134,4 +161,13 @@ export default function Dashboard() {
       )}
     </div>
   );
+}
+
+const BENCHMARK_LABELS: Record<string, string> = {
+  mmlu: "MMLU",
+  hellaswag: "HellaSwag",
+};
+
+function benchmarkLabel(key: string): string {
+  return BENCHMARK_LABELS[key] ?? key.toUpperCase();
 }

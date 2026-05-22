@@ -26,6 +26,7 @@ def init_db() -> None:
     # Imported here to avoid circular imports at module-load time.
     from .models import (  # noqa: F401  (registration side-effect)
         benchmark_run,
+        benchmark_score,
         dataset,
         example,
         judge_score,

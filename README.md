@@ -13,7 +13,7 @@ A local-first benchmarking platform for small language models served by [Ollama]
 
 > **Data → Models → Judge → Insights → Refinement → Data**
 
-Upload a JSONL benchmark dataset, select one or more locally installed Ollama models, run the same prompt template across all of them, score outputs with an LLM judge, visualize quality and latency, then iterate on the prompt/template.
+Upload a JSONL benchmark dataset (or import a standard public benchmark like **MMLU** or **HellaSwag**), select one or more locally installed Ollama models, run the same prompt template across all of them, score outputs with an LLM judge **and/or** a deterministic scorer, visualize quality and latency, then iterate on the prompt/template.
 
 ## Stack
 
@@ -88,13 +88,36 @@ The UI is now at `http://localhost:5173`. The Vite dev server proxies `/api` and
 
 ## Trying it out
 
-1. **Upload a dataset.** Go to **Datasets → Upload JSONL** and drop in `data/sample_dataset.jsonl`.
+1. **Get a dataset.** Either upload your own JSONL via **Datasets → Upload JSONL** (e.g. `data/sample_dataset.jsonl`), or use the **Import a standard benchmark** card on the same page to pull MMLU or HellaSwag straight from HuggingFace.
 2. **Inspect local models.** Visit **Models** to confirm Ollama is reachable.
-3. **Create a prompt template.** Use **Prompts** to keep or customize the default `{{input}}` template. Variables `{{input}}`, `{{reference}}`, `{{category}}`, and `{{difficulty}}` are available.
-4. **Configure a run.** On **Runs**, pick a dataset, a prompt, one or more generator models, and a judge model. Hit **Create & start run**.
-5. **Watch the dashboard.** The run page polls for progress. Once it completes you will see per-model averages, latency, and the full results table.
-6. **Explore insights.** Visit **Insights** for cross-run charts (radar, scatter, ranking).
+3. **Create a prompt template.** Use **Prompts** to keep or customize a template. The default `{{input}}` template works for free-form datasets; pick the seeded **MCQ benchmark (MMLU / HellaSwag)** template when the dataset comes from a multiple-choice benchmark — it tells the model to emit a single letter. Variables `{{input}}`, `{{reference}}`, `{{category}}`, and `{{difficulty}}` are available.
+4. **Configure a run.** On **Runs**, pick a dataset, a prompt, one or more generator models, and a judge model (optional). Hit **Create & start run**.
+5. **Watch the dashboard.** The run page polls for progress. Once it completes you will see per-model averages, latency, benchmark accuracy (if applicable), and the full results table.
+6. **Explore insights.** Visit **Insights** for cross-run charts (radar, scatter, ranking) including a benchmark-accuracy column.
 7. **Refine.** **Refinement** surfaces the lowest-scoring examples and lets you fork a new improved prompt template.
+
+## Scoring criteria
+
+A run can be scored by two independent mechanisms — use either or both:
+
+- **LLM judge** (subjective rubric, 1–5). Configure a judge model on the run form. Best for open-ended generations where there is no single "right" answer.
+- **Deterministic / traditional benchmark scoring**. Activated automatically whenever a dataset example carries a `task_type` in its metadata (which is the case for any benchmark imported via the catalog). Today this covers:
+  - **Multiple choice** (MMLU, HellaSwag): the model is asked to emit a letter; the runner parses A/B/C/D from the response and compares to the gold letter. Per-model **accuracy** appears alongside the judge rubric.
+
+> **About log-likelihoods.** Canonical leaderboard numbers for MMLU/HellaSwag come from scoring the loglikelihood of each candidate completion under the model. Ollama's chat API does not expose token logprobs, so this platform runs benchmarks in **generation mode** — the model has to follow the "answer with a single letter" instruction. Numbers therefore correlate with leaderboard scores but should not be expected to match them exactly, especially for tiny base models that struggle to follow the format.
+
+## Importing public benchmarks
+
+The **Datasets** page exposes a catalog of supported public benchmarks. Each import fetches a configurable subset/split from the HuggingFace `datasets-server` REST API and writes it into a regular dataset, so the rest of the app (runs, refinement, exports) treats it like any other.
+
+Currently supported:
+
+| Benchmark | Source | Subsets / split | Notes |
+| --- | --- | --- | --- |
+| **MMLU** | [`cais/mmlu`](https://huggingface.co/datasets/cais/mmlu) | 57 subjects + `all`; defaults to `test` | 4-way multiple choice across academic subjects |
+| **HellaSwag** | [`Rowan/hellaswag`](https://huggingface.co/datasets/Rowan/hellaswag) | `default` config; defaults to `validation` | Commonsense ending-completion; the `test` split has hidden labels and cannot be scored locally |
+
+The import card lets you pick a subset, a split, a number of examples (with sensible defaults), and whether to shuffle. Each imported example carries `metadata.task_type = "mcq"` + `metadata.answer_letter`, which is what triggers the deterministic scorer at run time.
 
 ## JSONL dataset format
 
@@ -156,6 +179,8 @@ Each score is clamped to the 1..5 range. If the judge wraps the JSON in markdown
 | GET    | `/api/runs/{id}/summary`              | Aggregated metrics per model             |
 | GET    | `/api/runs/{id}/export.csv`           | Download CSV of results                  |
 | GET    | `/api/insights/overview`              | Cross-run dashboard data                 |
+| GET    | `/api/benchmarks/catalog`             | List supported public benchmarks         |
+| POST   | `/api/benchmarks/import`              | Pull a benchmark (MMLU/HellaSwag) into a dataset |
 
 ## Optional: Docker
 
@@ -170,6 +195,7 @@ docker compose --profile full up --build  # Ollama + backend
 
 - Concurrent generation per model (currently sequential per-example)
 - Cost & token-budget tracking when using cloud models
-- Pull-from-HuggingFace dataset import
+- More benchmarks: HumanEval / MBPP (code + sandbox), GSM8K (math), ARC, TruthfulQA, TriviaQA (EM/F1)
+- Log-likelihood scoring path (would require a non-Ollama runtime such as `llama.cpp`/`transformers` for canonical MMLU/HellaSwag numbers)
 - Cross-run diffing in the Refinement page
 - Multi-judge ensembling

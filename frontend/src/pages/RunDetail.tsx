@@ -26,9 +26,14 @@ import {
 } from "../components/ui";
 import { useToast } from "../components/Toast";
 import { useAsync } from "../hooks/useAsync";
-import type { JudgeProviderInfo, ResultRow } from "../types";
+import type { BenchmarkBreakdown, JudgeProviderInfo, ResultRow, RunSummary } from "../types";
 import ScoreBarChart from "../components/charts/ScoreBarChart";
 import LatencyBarChart from "../components/charts/LatencyBarChart";
+import BenchmarkAccuracyBarChart from "../components/charts/BenchmarkAccuracyBarChart";
+import BenchmarkAccuracyGroupedChart from "../components/charts/BenchmarkAccuracyGroupedChart";
+import BenchmarkBreakdownStacked from "../components/charts/BenchmarkBreakdownStacked";
+import SubjectAccuracyBarChart from "../components/charts/SubjectAccuracyBarChart";
+import AccuracyLatencyScatter from "../components/charts/AccuracyLatencyScatter";
 import ProgressPanel from "../components/ProgressPanel";
 
 export default function RunDetail() {
@@ -132,6 +137,18 @@ export default function RunDetail() {
     });
   }, [results.data, modelFilter, categoryFilter, difficultyFilter, lowScoreOnly, search]);
 
+  const hasBenchmark = useMemo(
+    () => (results.data ?? []).some((row) => row.benchmark != null),
+    [results.data],
+  );
+  const bestBenchmarkModel = useMemo(() => {
+    if (!summary.data) return null;
+    const ranked = summary.data.by_model
+      .filter((m) => m.benchmark_accuracy != null && m.benchmark_count > 0)
+      .sort((a, b) => (b.benchmark_accuracy ?? 0) - (a.benchmark_accuracy ?? 0));
+    return ranked[0] ?? null;
+  }, [summary.data]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -212,7 +229,11 @@ export default function RunDetail() {
       )}
 
       {run.data && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div
+          className={`grid grid-cols-1 gap-4 ${
+            hasBenchmark ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3"
+          }`}
+        >
           <Stat label="Examples" value={summary.data?.total_examples ?? "—"} />
           <Stat
             label="Outputs"
@@ -229,18 +250,34 @@ export default function RunDetail() {
             }
             tone={summary.data?.by_model[0]?.avg_overall ? "good" : "default"}
           />
+          {hasBenchmark && (
+            <Stat
+              label="Best benchmark accuracy"
+              value={bestBenchmarkModel?.model_name ?? "—"}
+              hint={
+                bestBenchmarkModel?.benchmark_accuracy != null
+                  ? `${(bestBenchmarkModel.benchmark_accuracy * 100).toFixed(1)}% · ${bestBenchmarkModel.benchmark_correct}/${bestBenchmarkModel.benchmark_count}`
+                  : "Awaiting deterministic scoring"
+              }
+              tone={bestBenchmarkModel?.benchmark_accuracy ? "good" : "default"}
+            />
+          )}
         </div>
       )}
 
       {summary.data && summary.data.by_model.length > 0 && (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          <Card title="Average overall score">
+          <Card title="Average overall score" description="LLM judge rubric (1–5)">
             <ScoreBarChart data={summary.data.by_model} metric="avg_overall" label="Overall" />
           </Card>
           <Card title="Latency">
             <LatencyBarChart data={summary.data.by_model} />
           </Card>
         </div>
+      )}
+
+      {summary.data && summary.data.benchmarks.length > 0 && (
+        <BenchmarkScoringSection summary={summary.data} />
       )}
 
       <Card
@@ -315,6 +352,7 @@ export default function RunDetail() {
                   <th className="px-2 py-2">Example</th>
                   <th className="px-2 py-2">Model</th>
                   <th className="px-2 py-2">Overall</th>
+                  {hasBenchmark && <th className="px-2 py-2">Benchmark</th>}
                   <th className="px-2 py-2">Latency</th>
                   <th className="px-2 py-2">Tokens/s</th>
                   <th className="px-2 py-2">Status</th>
@@ -326,6 +364,7 @@ export default function RunDetail() {
                   const overall = row.judge?.overall;
                   const overallTone =
                     overall == null ? "neutral" : overall >= 4 ? "good" : overall >= 3 ? "warning" : "danger";
+                  const benchmark = row.benchmark;
                   return (
                     <tr key={row.output_id} className="align-top">
                       <td className="px-2 py-3 max-w-[24rem]">
@@ -348,6 +387,23 @@ export default function RunDetail() {
                           <Badge tone="neutral">—</Badge>
                         )}
                       </td>
+                      {hasBenchmark && (
+                        <td className="px-2 py-3">
+                          {benchmark?.is_correct === true ? (
+                            <Badge tone="good">
+                              ✓ {benchmark.predicted ?? ""}
+                            </Badge>
+                          ) : benchmark?.is_correct === false ? (
+                            <Badge tone="danger">
+                              ✗ {benchmark.predicted ?? "?"} / {benchmark.expected ?? "?"}
+                            </Badge>
+                          ) : benchmark?.parse_error ? (
+                            <Badge tone="warning">parse err</Badge>
+                          ) : (
+                            <Badge tone="neutral">—</Badge>
+                          )}
+                        </td>
+                      )}
                       <td className="px-2 py-3 text-xs text-ink-700">
                         {row.latency_ms != null ? `${Math.round(row.latency_ms)} ms` : "—"}
                       </td>
@@ -472,6 +528,35 @@ function ResultModal({ row, onClose, onReviewSaved }: ResultModalProps) {
             </div>
           )}
 
+          {row.benchmark && (
+            <div className="rounded-xl border border-ink-100 bg-ink-50 p-4">
+              <div className="mb-3 flex items-center justify-between text-xs font-medium uppercase tracking-wide text-ink-500">
+                <span>
+                  Benchmark ({row.benchmark.benchmark ?? "n/a"} · {row.benchmark.scorer ?? "n/a"})
+                </span>
+                {row.benchmark.is_correct === true && <Badge tone="good">correct</Badge>}
+                {row.benchmark.is_correct === false && <Badge tone="danger">incorrect</Badge>}
+              </div>
+              {row.benchmark.parse_error ? (
+                <ErrorState message={`Benchmark parse error: ${row.benchmark.parse_error}`} />
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <ScoreCell label="Predicted" value={null} display={row.benchmark.predicted ?? "—"} />
+                  <ScoreCell label="Expected" value={null} display={row.benchmark.expected ?? "—"} />
+                  <ScoreCell
+                    label="Score"
+                    value={null}
+                    display={
+                      row.benchmark.score != null
+                        ? `${(row.benchmark.score * 100).toFixed(0)}%`
+                        : "—"
+                    }
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="rounded-xl border border-ink-100 bg-white p-4">
             <div className="mb-3 text-xs font-medium uppercase tracking-wide text-ink-500">
               Human review
@@ -567,13 +652,188 @@ function DownloadIcon() {
   );
 }
 
-function ScoreCell({ label, value }: { label: string; value: number | null | undefined }) {
+function ScoreCell({
+  label,
+  value,
+  display,
+}: {
+  label: string;
+  value: number | null | undefined;
+  display?: string;
+}) {
   return (
     <div className="rounded-lg bg-white px-3 py-2 shadow-sm">
       <div className="text-[10px] font-medium uppercase tracking-wide text-ink-400">{label}</div>
       <div className="mt-1 text-base font-semibold text-ink-800">
-        {value == null ? "—" : value.toFixed(2)}
+        {display ?? (value == null ? "—" : value.toFixed(2))}
       </div>
     </div>
+  );
+}
+
+const BENCHMARK_LABELS: Record<string, string> = {
+  mmlu: "MMLU",
+  hellaswag: "HellaSwag",
+};
+
+function labelFor(key: string): string {
+  return BENCHMARK_LABELS[key] ?? key.toUpperCase();
+}
+
+function BenchmarkScoringSection({ summary }: { summary: RunSummary }) {
+  const benchmarks = summary.benchmarks;
+  const multi = benchmarks.length > 1;
+
+  return (
+    <div className="space-y-6">
+      <Card
+        title="Benchmark scoring"
+        description="Deterministic A/B/C/D scoring against the gold answer — independent of the LLM judge."
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
+          {benchmarks.map((bench) => (
+            <Stat
+              key={bench.benchmark}
+              label={`${labelFor(bench.benchmark)} accuracy`}
+              value={
+                bench.accuracy != null ? `${(bench.accuracy * 100).toFixed(1)}%` : "—"
+              }
+              hint={`${bench.correct} / ${bench.count} correct${
+                bench.parse_error_count ? ` · ${bench.parse_error_count} parse err` : ""
+              }`}
+              tone={bench.accuracy != null && bench.accuracy >= 0.5 ? "good" : "default"}
+            />
+          ))}
+        </div>
+
+        <p className="mt-4 text-xs leading-relaxed text-ink-500">
+          We evaluate each output by parsing a single A/B/C/D letter from the model's response and
+          comparing it to the gold letter on the example. The metric reported is plain{" "}
+          <span className="font-medium">accuracy</span> (correct ÷ scored). Note this is{" "}
+          <span className="font-medium">generation-mode</span> evaluation — Ollama does not expose
+          log-probabilities, so results may differ from canonical leaderboard numbers.
+        </p>
+      </Card>
+
+      {multi && (
+        <Card
+          title="Accuracy by model and benchmark"
+          description="One cluster per model, one colored bar per benchmark."
+        >
+          <BenchmarkAccuracyGroupedChart data={summary.benchmark_by_model} />
+        </Card>
+      )}
+
+      <Card
+        title="Accuracy vs latency"
+        description="Quality–speed trade-off for the deterministic scorer (point size = items scored)."
+      >
+        <AccuracyLatencyScatter data={summary.by_model} />
+      </Card>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <Card
+          title="Coverage breakdown"
+          description="Per model: correct, incorrect, and items the parser couldn't read a letter from."
+        >
+          <BenchmarkBreakdownStacked data={summary.by_model} />
+        </Card>
+        {!multi && (
+          <Card title="Accuracy by model" description={`Single benchmark: ${labelFor(benchmarks[0].benchmark)}`}>
+            <BenchmarkAccuracyBarChart
+              data={summary.benchmark_by_model.filter((s) => s.benchmark === benchmarks[0].benchmark)}
+              benchmarkLabel={labelFor(benchmarks[0].benchmark)}
+            />
+          </Card>
+        )}
+        {multi && (
+          <Card title="Coverage per benchmark" description="Choose a benchmark above for filtered views.">
+            <BenchmarkBreakdownStacked
+              data={summary.by_model}
+              benchmark={benchmarks[0].benchmark}
+            />
+          </Card>
+        )}
+      </div>
+
+      {benchmarks.map((bench) => (
+        <PerBenchmarkCard
+          key={bench.benchmark}
+          summary={summary}
+          bench={bench}
+        />
+      ))}
+    </div>
+  );
+}
+
+function PerBenchmarkCard({
+  summary,
+  bench,
+}: {
+  summary: RunSummary;
+  bench: BenchmarkBreakdown;
+}) {
+  const cells = summary.benchmark_by_model.filter((s) => s.benchmark === bench.benchmark);
+  const subjects = summary.benchmark_subjects[bench.benchmark] ?? [];
+
+  return (
+    <Card
+      title={`${labelFor(bench.benchmark)} · detail`}
+      description={
+        bench.accuracy != null
+          ? `${(bench.accuracy * 100).toFixed(1)}% across ${bench.count} scored items${
+              bench.parse_error_count ? ` (${bench.parse_error_count} parse errors)` : ""
+            }.`
+          : "No scored items yet."
+      }
+    >
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <div>
+          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-500">
+            Accuracy by model
+          </div>
+          <BenchmarkAccuracyBarChart data={cells} benchmarkLabel={labelFor(bench.benchmark)} />
+        </div>
+        <div>
+          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-500">
+            Per-subject accuracy{subjects.length > 20 ? " (top + bottom)" : ""}
+          </div>
+          {subjects.length > 1 ? (
+            <SubjectAccuracyBarChart data={subjects} />
+          ) : (
+            <div className="flex h-72 items-center justify-center text-sm text-ink-400">
+              Only one subject — nothing to break down.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <table className="mt-6 w-full text-sm">
+        <thead className="text-left text-xs uppercase text-ink-400">
+          <tr>
+            <th className="px-2 py-2">Model</th>
+            <th className="px-2 py-2">Accuracy</th>
+            <th className="px-2 py-2">Correct / scored</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-ink-100">
+          {cells
+            .slice()
+            .sort((a, b) => (b.accuracy ?? 0) - (a.accuracy ?? 0))
+            .map((row) => (
+              <tr key={row.model_name}>
+                <td className="px-2 py-2 font-mono text-xs text-ink-800">{row.model_name}</td>
+                <td className="px-2 py-2 font-medium">
+                  {row.accuracy != null ? `${(row.accuracy * 100).toFixed(1)}%` : "—"}
+                </td>
+                <td className="px-2 py-2 text-xs text-ink-600">
+                  {row.correct} / {row.count}
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </Card>
   );
 }

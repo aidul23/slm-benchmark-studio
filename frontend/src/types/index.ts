@@ -136,6 +136,43 @@ export interface JudgeScore {
   accepted_judge_score?: boolean | null;
 }
 
+export interface BenchmarkScore {
+  benchmark?: string | null;
+  task_type?: string | null;
+  scorer?: string | null;
+  predicted?: string | null;
+  expected?: string | null;
+  is_correct?: boolean | null;
+  score?: number | null;
+  parse_error?: string | null;
+}
+
+export interface BenchmarkBreakdown {
+  benchmark: string;
+  task_type?: string | null;
+  count: number;
+  correct: number;
+  incorrect: number;
+  parse_error_count: number;
+  accuracy?: number | null;
+}
+
+export interface BenchmarkSubjectBreakdown {
+  benchmark: string;
+  subject: string;
+  count: number;
+  correct: number;
+  accuracy?: number | null;
+}
+
+export interface BenchmarkModelStat {
+  benchmark: string;
+  model_name: string;
+  count: number;
+  correct: number;
+  accuracy?: number | null;
+}
+
 export interface ResultRow {
   output_id: number;
   run_id: number;
@@ -154,6 +191,7 @@ export interface ResultRow {
   difficulty?: string | null;
   error?: string | null;
   judge?: JudgeScore | null;
+  benchmark?: BenchmarkScore | null;
 }
 
 export interface ModelSummary {
@@ -171,6 +209,11 @@ export interface ModelSummary {
   avg_conciseness?: number | null;
   avg_instruction_following?: number | null;
   avg_overall?: number | null;
+  benchmark_count: number;
+  benchmark_correct: number;
+  benchmark_accuracy?: number | null;
+  benchmark_parse_error_count: number;
+  by_benchmark: BenchmarkBreakdown[];
 }
 
 export interface RunSummary {
@@ -178,9 +221,18 @@ export interface RunSummary {
   total_examples: number;
   total_outputs: number;
   by_model: ModelSummary[];
-  by_category: Record<string, { count: number; avg_overall: number; avg_latency_ms: number }>;
-  by_difficulty: Record<string, { count: number; avg_overall: number; avg_latency_ms: number }>;
+  by_category: Record<
+    string,
+    { count: number; avg_overall: number; avg_latency_ms: number; benchmark_count?: number; benchmark_accuracy?: number }
+  >;
+  by_difficulty: Record<
+    string,
+    { count: number; avg_overall: number; avg_latency_ms: number; benchmark_count?: number; benchmark_accuracy?: number }
+  >;
   worst_examples: ResultRow[];
+  benchmarks: BenchmarkBreakdown[];
+  benchmark_by_model: BenchmarkModelStat[];
+  benchmark_subjects: Record<string, BenchmarkSubjectBreakdown[]>;
 }
 
 export interface InsightsOverview {
@@ -189,6 +241,17 @@ export interface InsightsOverview {
   total_outputs: number;
   best_model_by_overall?: { model_name: string; avg_overall: number | null } | null;
   fastest_model_by_latency?: { model_name: string; avg_latency_ms: number | null } | null;
+  best_model_by_benchmark?: {
+    model_name: string;
+    benchmark_accuracy: number | null;
+    benchmark_count: number;
+  } | null;
+  best_per_benchmark: Array<{
+    benchmark: string;
+    model_name: string;
+    accuracy: number | null;
+    count: number;
+  }>;
   recent_runs: Array<{
     id: number;
     name: string;
@@ -198,6 +261,8 @@ export interface InsightsOverview {
     progress_total: number;
   }>;
   by_model: ModelSummary[];
+  benchmarks: BenchmarkBreakdown[];
+  benchmark_by_model: BenchmarkModelStat[];
 }
 
 export interface RunCreatePayload {
@@ -219,4 +284,52 @@ export interface RunCreatePayload {
 export interface RunStartPayload {
   /** Only required when the run's judge provider needs an API key. */
   judge_api_key?: string | null;
+}
+
+export interface BenchmarkSubsetInfo {
+  key: string;
+  label: string;
+  description?: string | null;
+}
+
+export interface BenchmarkInfo {
+  key: string;
+  name: string;
+  description: string;
+  task_type: string;
+  default_split: string;
+  splits: string[];
+  subsets: BenchmarkSubsetInfo[];
+  default_subset?: string | null;
+  suggested_limit: number;
+  max_limit: number;
+  docs_url?: string | null;
+}
+
+export interface BenchmarkCatalog {
+  benchmarks: BenchmarkInfo[];
+}
+
+export interface BenchmarkImportPayload {
+  benchmark: string;
+  subset?: string | null;
+  split?: string | null;
+  limit: number;
+  offset?: number;
+  shuffle?: boolean;
+  seed?: number;
+  name?: string | null;
+  description?: string | null;
+}
+
+export interface BenchmarkImportResponse {
+  dataset: Dataset;
+  benchmark: string;
+  subset?: string | null;
+  split?: string | null;
+  fetched: number;
+  imported: number;
+  requested: number;
+  source_url?: string | null;
+  warnings: string[];
 }
