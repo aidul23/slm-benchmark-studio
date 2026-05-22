@@ -52,6 +52,10 @@ def _run_lightweight_migrations() -> None:
             ("current_phase", "TEXT"),
             ("current_activity", "TEXT"),
             ("export_path", "TEXT"),
+            ("judge_provider", "TEXT DEFAULT 'ollama'"),
+            ("judge_criteria_json", "TEXT"),
+            ("judge_system_prompt", "TEXT"),
+            ("judge_user_template", "TEXT"),
         ],
     }
 

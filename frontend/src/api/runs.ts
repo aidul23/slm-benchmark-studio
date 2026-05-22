@@ -3,6 +3,7 @@ import type {
   BenchmarkRun,
   ResultRow,
   RunCreatePayload,
+  RunStartPayload,
   RunSummary,
 } from "../types";
 
@@ -18,8 +19,8 @@ export function createRun(payload: RunCreatePayload) {
   return apiPost<BenchmarkRun>("/api/runs", payload);
 }
 
-export function startRun(id: number) {
-  return apiPost<BenchmarkRun>(`/api/runs/${id}/start`);
+export function startRun(id: number, payload?: RunStartPayload) {
+  return apiPost<BenchmarkRun>(`/api/runs/${id}/start`, payload ?? {});
 }
 
 export function deleteRun(id: number) {

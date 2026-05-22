@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .database import init_db
-from .routers import datasets, insights, ollama_models, prompts, runs
+from .routers import datasets, insights, judge, ollama_models, prompts, providers, runs
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -47,6 +47,8 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(ollama_models.router)
+    app.include_router(providers.router)
+    app.include_router(judge.router)
     app.include_router(datasets.router)
     app.include_router(prompts.router)
     app.include_router(runs.router)

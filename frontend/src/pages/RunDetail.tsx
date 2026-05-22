@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { ApiError } from "../api/client";
+import { getJudgeKey } from "../api/judgeKeys";
+import { listProviders } from "../api/providers";
 import {
   exportRunCsvUrl,
   getResults,
@@ -21,8 +24,9 @@ import {
   Stat,
   StatusBadge,
 } from "../components/ui";
+import { useToast } from "../components/Toast";
 import { useAsync } from "../hooks/useAsync";
-import type { ResultRow } from "../types";
+import type { JudgeProviderInfo, ResultRow } from "../types";
 import ScoreBarChart from "../components/charts/ScoreBarChart";
 import LatencyBarChart from "../components/charts/LatencyBarChart";
 import ProgressPanel from "../components/ProgressPanel";
@@ -34,6 +38,35 @@ export default function RunDetail() {
   const run = useAsync(() => getRun(id), [id]);
   const summary = useAsync(() => getSummary(id), [id]);
   const results = useAsync(() => getResults(id), [id]);
+  const providers = useAsync(() => listProviders(), []);
+  const toast = useToast();
+
+  async function handleStart() {
+    if (!run.data) return;
+    const provider: JudgeProviderInfo | undefined = providers.data?.find(
+      (p) => p.key === run.data?.judge_provider,
+    );
+    let apiKey: string | null = null;
+    if (run.data.judge_model && provider?.requires_api_key) {
+      apiKey = getJudgeKey(run.data.judge_provider) || null;
+      if (!apiKey) {
+        toast.error(
+          `This run's judge (${provider.name}) needs an API key. Open the Runs page, enter the key for this session, then come back and restart.`,
+          "API key required",
+        );
+        return;
+      }
+    }
+    try {
+      await startRun(id, { judge_api_key: apiKey });
+      void run.reload();
+    } catch (err) {
+      const detail = err instanceof ApiError ? err.payload : null;
+      const detailObj = (detail as { detail?: { message?: string } } | null)?.detail;
+      const message = (detailObj?.message ?? (err instanceof Error ? err.message : String(err))) || "Could not start run";
+      toast.error(message, "Could not start run");
+    }
+  }
 
   const [modelFilter, setModelFilter] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
@@ -109,7 +142,26 @@ export default function RunDetail() {
           <h1 className="mt-2 text-2xl font-semibold text-ink-900">{run.data?.name ?? "Run"}</h1>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-ink-500">
             {run.data && <StatusBadge status={run.data.status} />}
-            {run.data?.judge_model && <Badge tone="neutral">judge: {run.data.judge_model}</Badge>}
+            {run.data?.judge_model && (
+              <Badge tone="neutral">
+                judge: {run.data.judge_model}
+                {run.data.judge_provider && run.data.judge_provider !== "ollama" && (
+                  <span className="ml-1 text-[10px] uppercase tracking-wide opacity-70">
+                    · {run.data.judge_provider}
+                  </span>
+                )}
+              </Badge>
+            )}
+            {run.data?.judge_model && run.data?.judge_criteria && (
+              <Badge tone="info">
+                rubric: {run.data.judge_criteria.length}/5 criteria
+                {(run.data.judge_system_prompt || run.data.judge_user_template) && (
+                  <span className="ml-1 text-[10px] uppercase tracking-wide opacity-70">
+                    · custom prompt
+                  </span>
+                )}
+              </Badge>
+            )}
             {run.data?.selected_models.map((model) => (
               <Badge key={model} tone="info">
                 {model}
@@ -129,7 +181,7 @@ export default function RunDetail() {
             <DownloadIcon /> Download full CSV
           </a>
           {run.data && run.data.status !== "running" && (
-            <Button size="sm" onClick={() => void startRun(id).then(() => run.reload())}>
+            <Button size="sm" onClick={() => void handleStart()}>
               {run.data.status === "completed" ? "Re-run" : "Start"}
             </Button>
           )}

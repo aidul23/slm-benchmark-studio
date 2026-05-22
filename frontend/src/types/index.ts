@@ -53,6 +53,49 @@ export interface PromptTemplate {
   notes?: string | null;
 }
 
+export type JudgeProviderKey = "ollama" | "openai" | "anthropic" | "gemini" | string;
+
+export interface JudgeProviderInfo {
+  key: JudgeProviderKey;
+  name: string;
+  description: string;
+  requires_api_key: boolean;
+  docs_url?: string | null;
+  suggested_models: string[];
+}
+
+export interface ProviderModel {
+  id: string;
+  name: string;
+  size?: number | null;
+}
+
+export interface ProviderListModelsResponse {
+  provider: JudgeProviderKey;
+  models: ProviderModel[];
+}
+
+export type JudgeCriterionKey =
+  | "correctness"
+  | "factuality"
+  | "completeness"
+  | "conciseness"
+  | "instruction_following";
+
+export interface JudgeCriterion {
+  key: JudgeCriterionKey;
+  label: string;
+  description: string;
+}
+
+export interface JudgeDefaults {
+  system_prompt: string;
+  user_template: string;
+  criteria: JudgeCriterion[];
+  min_criteria: number;
+  placeholders: string[];
+}
+
 export interface BenchmarkRun {
   id: number;
   name: string;
@@ -60,6 +103,10 @@ export interface BenchmarkRun {
   prompt_template_id: number;
   selected_models: string[];
   judge_model?: string | null;
+  judge_provider: JudgeProviderKey;
+  judge_criteria: JudgeCriterionKey[];
+  judge_system_prompt?: string | null;
+  judge_user_template?: string | null;
   status: RunStatus;
   created_at: string;
   started_at?: string | null;
@@ -159,8 +206,17 @@ export interface RunCreatePayload {
   prompt_template_id: number;
   selected_models: string[];
   judge_model?: string | null;
+  judge_provider?: JudgeProviderKey;
+  judge_criteria?: JudgeCriterionKey[] | null;
+  judge_system_prompt?: string | null;
+  judge_user_template?: string | null;
   temperature: number;
   max_tokens: number;
   repeats: number;
   notes?: string | null;
+}
+
+export interface RunStartPayload {
+  /** Only required when the run's judge provider needs an API key. */
+  judge_api_key?: string | null;
 }
