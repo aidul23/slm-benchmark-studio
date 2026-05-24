@@ -24,6 +24,22 @@ class BenchmarkRun(SQLModel, table=True):
     prompt_template_id: int = Field(foreign_key="prompt_templates.id", index=True)
     selected_models_json: str = Field(description="JSON list of model names used as generators")
     judge_model: Optional[str] = Field(default=None)
+    judge_provider: str = Field(
+        default="ollama",
+        description="Chat provider serving the judge model: 'ollama' | 'openai' | 'anthropic' | 'gemini'",
+    )
+    judge_criteria_json: Optional[str] = Field(
+        default=None,
+        description="JSON list of selected criterion keys (subset of the 5-criterion rubric). NULL → all 5.",
+    )
+    judge_system_prompt: Optional[str] = Field(
+        default=None,
+        description="Optional user-edited judge system prompt. NULL → use DEFAULT_JUDGE_SYSTEM.",
+    )
+    judge_user_template: Optional[str] = Field(
+        default=None,
+        description="Optional user-edited judge user-message template. NULL → use DEFAULT_JUDGE_TEMPLATE.",
+    )
     status: RunStatus = Field(default=RunStatus.PENDING, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     started_at: Optional[datetime] = Field(default=None)

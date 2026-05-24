@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from ..database import get_session
 from ..models.benchmark_run import BenchmarkRun, RunStatus
+from ..models.benchmark_score import BenchmarkScore
 from ..models.dataset import Dataset
 from ..models.judge_score import JudgeScore
 from ..models.model_output import ModelOutput
@@ -18,10 +19,12 @@ from ..schemas.result import (
     ResultRow,
     RunSummary,
 )
-from ..schemas.run import RunCreate, RunRead, RunUpdate
+from ..schemas.run import RunCreate, RunRead, RunStartRequest, RunUpdate
 from ..services import metrics
 from ..services.benchmark_runner import start_run_background
 from ..services.export_service import run_results_to_csv
+from ..services.judge_runner import ALL_CRITERIA_KEYS, MIN_CRITERIA
+from ..services.providers import get_provider
 
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -30,6 +33,18 @@ router = APIRouter(prefix="/api/runs", tags=["runs"])
 def _to_read(run: BenchmarkRun) -> RunRead:
     selected = json.loads(run.selected_models_json) if run.selected_models_json else []
     config = json.loads(run.config_json) if run.config_json else None
+    # NULL `judge_criteria_json` is the "use all 5" sentinel — convert it to an
+    # explicit list so the frontend doesn't need to know about the convention.
+    if run.judge_criteria_json:
+        try:
+            stored = json.loads(run.judge_criteria_json)
+            criteria = [c for c in stored if isinstance(c, str) and c in ALL_CRITERIA_KEYS]
+        except json.JSONDecodeError:
+            criteria = list(ALL_CRITERIA_KEYS)
+    else:
+        criteria = list(ALL_CRITERIA_KEYS)
+    if len(criteria) < MIN_CRITERIA:
+        criteria = list(ALL_CRITERIA_KEYS)
     return RunRead(
         id=run.id or 0,
         name=run.name,
@@ -37,6 +52,10 @@ def _to_read(run: BenchmarkRun) -> RunRead:
         prompt_template_id=run.prompt_template_id,
         selected_models=selected,
         judge_model=run.judge_model,
+        judge_provider=run.judge_provider or "ollama",
+        judge_criteria=criteria,
+        judge_system_prompt=run.judge_system_prompt,
+        judge_user_template=run.judge_user_template,
         status=run.status,
         created_at=run.created_at,
         started_at=run.started_at,
@@ -69,17 +88,34 @@ def create_run(payload: RunCreate, session: Session = Depends(get_session)) -> R
     if not payload.selected_models:
         raise HTTPException(status_code=400, detail="Select at least one model")
 
+    provider_key = (payload.judge_provider or "ollama").strip().lower()
+    if payload.judge_model and get_provider(provider_key) is None:
+        raise HTTPException(status_code=400, detail=f"Unknown judge provider '{provider_key}'")
+
     config = {
         "temperature": payload.temperature,
         "max_tokens": payload.max_tokens,
         "repeats": payload.repeats,
     }
+
+    # `judge_criteria` was already validated by the Pydantic schema; here we
+    # just normalize: NULL → "use defaults" (stored as NULL in the DB). We
+    # also collapse empty/whitespace prompt overrides to NULL so a user that
+    # didn't customize doesn't end up with a stale blank string.
+    criteria_json = json.dumps(payload.judge_criteria) if payload.judge_criteria else None
+    system_prompt = (payload.judge_system_prompt or "").strip() or None
+    user_template = (payload.judge_user_template or "").strip() or None
+
     run = BenchmarkRun(
         name=payload.name,
         dataset_id=payload.dataset_id,
         prompt_template_id=payload.prompt_template_id,
         selected_models_json=json.dumps(payload.selected_models),
         judge_model=payload.judge_model,
+        judge_provider=provider_key,
+        judge_criteria_json=criteria_json,
+        judge_system_prompt=system_prompt,
+        judge_user_template=user_template,
         config_json=json.dumps(config),
         notes=payload.notes,
         status=RunStatus.PENDING,
@@ -116,6 +152,7 @@ def update_run(run_id: int, payload: RunUpdate, session: Session = Depends(get_s
 def start_run(
     run_id: int,
     background_tasks: BackgroundTasks,
+    payload: RunStartRequest | None = None,
     session: Session = Depends(get_session),
 ) -> RunRead:
     run = session.get(BenchmarkRun, run_id)
@@ -123,6 +160,18 @@ def start_run(
         raise HTTPException(status_code=404, detail="Run not found")
     if run.status == RunStatus.RUNNING:
         raise HTTPException(status_code=409, detail="Run already in progress")
+
+    judge_api_key = (payload.judge_api_key if payload else None) or None
+    provider_key = (run.judge_provider or "ollama").strip().lower()
+    if run.judge_model:
+        provider = get_provider(provider_key)
+        if provider is None:
+            raise HTTPException(status_code=400, detail=f"Unknown judge provider '{provider_key}'")
+        if provider.info.requires_api_key and not judge_api_key:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{provider.info.name} judge requires an API key. Enter it on the run setup page and retry.",
+            )
 
     run.status = RunStatus.PENDING
     run.error = None
@@ -134,7 +183,9 @@ def start_run(
     session.commit()
     session.refresh(run)
 
-    background_tasks.add_task(start_run_background, run_id)
+    # The API key flows only through the BackgroundTasks closure and the
+    # in-memory BenchmarkRunner — it is never written to the run record.
+    background_tasks.add_task(start_run_background, run_id, judge_api_key)
     return _to_read(run)
 
 
@@ -149,6 +200,8 @@ def delete_run(run_id: int, session: Session = Depends(get_session)) -> dict:
     if output_ids:
         for score in session.exec(select(JudgeScore).where(JudgeScore.model_output_id.in_(output_ids))):  # type: ignore[arg-type]
             session.delete(score)
+        for bscore in session.exec(select(BenchmarkScore).where(BenchmarkScore.model_output_id.in_(output_ids))):  # type: ignore[arg-type]
+            session.delete(bscore)
     for output in outputs:
         session.delete(output)
     session.delete(run)

@@ -18,6 +18,7 @@ def run_results_to_csv(session: Session, run_id: int) -> bytes:
     records: List[dict] = []
     for row in rows:
         judge = row.judge
+        bench = row.benchmark
         records.append(
             {
                 "output_id": row.output_id,
@@ -47,6 +48,14 @@ def run_results_to_csv(session: Session, run_id: int) -> bytes:
                 "human_score": judge.human_score if judge else None,
                 "human_notes": judge.human_notes if judge else None,
                 "accepted_judge_score": judge.accepted_judge_score if judge else None,
+                "benchmark": bench.benchmark if bench else None,
+                "benchmark_task_type": bench.task_type if bench else None,
+                "benchmark_scorer": bench.scorer if bench else None,
+                "benchmark_predicted": bench.predicted if bench else None,
+                "benchmark_expected": bench.expected if bench else None,
+                "benchmark_is_correct": bench.is_correct if bench else None,
+                "benchmark_score": bench.score if bench else None,
+                "benchmark_parse_error": bench.parse_error if bench else None,
             }
         )
 

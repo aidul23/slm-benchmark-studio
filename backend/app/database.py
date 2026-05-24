@@ -26,6 +26,7 @@ def init_db() -> None:
     # Imported here to avoid circular imports at module-load time.
     from .models import (  # noqa: F401  (registration side-effect)
         benchmark_run,
+        benchmark_score,
         dataset,
         example,
         judge_score,
@@ -52,6 +53,10 @@ def _run_lightweight_migrations() -> None:
             ("current_phase", "TEXT"),
             ("current_activity", "TEXT"),
             ("export_path", "TEXT"),
+            ("judge_provider", "TEXT DEFAULT 'ollama'"),
+            ("judge_criteria_json", "TEXT"),
+            ("judge_system_prompt", "TEXT"),
+            ("judge_user_template", "TEXT"),
         ],
     }
 

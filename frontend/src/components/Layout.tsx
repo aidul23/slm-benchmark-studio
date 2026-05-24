@@ -43,12 +43,36 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-ink-200 px-5 py-4 text-xs text-ink-400">
-          <p className="font-medium text-ink-500">Local-first</p>
-          <p className="mt-1 leading-relaxed">
-            Powered by Ollama at <span className="font-mono">localhost:11434</span>
-          </p>
+        <div className="border-t border-ink-200 px-4 py-4 text-xs text-ink-500">
+        <div className="space-y-2">
+          <a
+            href="https://github.com/aidul23/slm-benchmark-studio"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-2 rounded-lg px-2 py-2 font-medium text-ink-600 transition-colors hover:bg-ink-100 hover:text-ink-900"
+          >
+            <GithubIcon className="h-4 w-4" />
+            GitHub Repository
+          </a>
+
+          <a
+            href="https://github.com/aidul23/slm-benchmark-studio/issues"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-2 rounded-lg px-2 py-2 font-medium text-ink-600 transition-colors hover:bg-ink-100 hover:text-ink-900"
+          >
+            <SupportIcon className="h-4 w-4" />
+            Support / Issues
+          </a>
         </div>
+
+        {/* <div className="mt-4 rounded-lg bg-ink-50 px-3 py-2">
+          <p className="font-medium text-ink-600">Local-first</p>
+          <p className="mt-1 leading-relaxed text-ink-400">
+            Ollama: <span className="font-mono">localhost:11434</span>
+          </p>
+        </div> */}
+      </div>
       </aside>
 
       <div className="flex flex-1 flex-col">
@@ -103,6 +127,42 @@ function BrandMark() {
       <path d="M10 19V5" />
       <path d="M16 19v-7" />
       <path d="M22 19V14" />
+    </svg>
+  );
+}
+
+function GithubIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path
+        fillRule="evenodd"
+        d="M12 2C6.477 2 2 6.484 2 12.021c0 4.428 2.865 8.184 6.839 9.504.5.092.682-.217.682-.482 0-.237-.009-.866-.014-1.699-2.782.605-3.369-1.343-3.369-1.343-.455-1.158-1.11-1.467-1.11-1.467-.908-.621.069-.609.069-.609 1.004.071 1.532 1.034 1.532 1.034.892 1.531 2.341 1.089 2.91.833.091-.647.35-1.089.636-1.34-2.221-.253-4.555-1.113-4.555-4.951 0-1.094.39-1.988 1.03-2.688-.103-.254-.446-1.274.098-2.656 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.56 9.56 0 0 1 2.504.337c1.909-1.296 2.748-1.026 2.748-1.026.546 1.382.203 2.402.1 2.656.641.7 1.028 1.594 1.028 2.688 0 3.848-2.337 4.695-4.566 4.944.359.31.679.923.679 1.861 0 1.344-.012 2.428-.012 2.758 0 .267.18.578.688.48C19.138 20.2 22 16.447 22 12.021 22 6.484 17.523 2 12 2Z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+function SupportIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 1 1 5.83 1c0 2-3 2-3 4" />
+      <path d="M12 17h.01" />
     </svg>
   );
 }

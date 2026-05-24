@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { ApiError } from "../api/client";
 import { listDatasets } from "../api/datasets";
+import { getJudgeDefaults } from "../api/judge";
+import { getJudgeKey, setJudgeKey } from "../api/judgeKeys";
 import { listOllamaModels } from "../api/models";
 import { listPrompts } from "../api/prompts";
+import { listProviderModels, listProviders } from "../api/providers";
 import { createRun, deleteRun, listRuns, startRun } from "../api/runs";
 import {
   Badge,
@@ -17,51 +21,120 @@ import {
   StatusBadge,
   Textarea,
 } from "../components/ui";
+import { useToast } from "../components/Toast";
 import { useAsync } from "../hooks/useAsync";
-import type { RunCreatePayload } from "../types";
+import type {
+  JudgeCriterionKey,
+  JudgeProviderInfo,
+  JudgeProviderKey,
+  ProviderModel,
+  RunCreatePayload,
+} from "../types";
 
 interface RunFormState {
   name: string;
   dataset_id: number | null;
   prompt_template_id: number | null;
+  judge_provider: JudgeProviderKey;
   judge_model: string;
   selected_models: string[];
+  judge_criteria: JudgeCriterionKey[];
+  judge_system_prompt: string;
+  judge_user_template: string;
   temperature: number;
   max_tokens: number;
   repeats: number;
   notes: string;
 }
 
+// The 5 criterion keys are fixed by the backend. We list them in the same
+// canonical order the server uses so the UI checkbox order is stable.
+const ALL_CRITERIA: JudgeCriterionKey[] = [
+  "correctness",
+  "factuality",
+  "completeness",
+  "conciseness",
+  "instruction_following",
+];
+
+const MIN_CRITERIA = 2;
+
 const defaultForm: RunFormState = {
   name: "",
   dataset_id: null,
   prompt_template_id: null,
+  judge_provider: "ollama",
   judge_model: "",
   selected_models: [],
+  judge_criteria: [...ALL_CRITERIA],
+  judge_system_prompt: "",
+  judge_user_template: "",
   temperature: 0.2,
   max_tokens: 512,
   repeats: 1,
   notes: "",
 };
 
+function describeApiError(err: unknown): { message: string; code?: string } {
+  if (err instanceof ApiError) {
+    // FastAPI returns `{detail: {code, message}}` from our providers router.
+    const detail = (err.payload as { detail?: { code?: string; message?: string } | string })?.detail;
+    if (detail && typeof detail === "object") {
+      return { message: detail.message || err.message, code: detail.code };
+    }
+    return { message: err.message };
+  }
+  return { message: err instanceof Error ? err.message : String(err) };
+}
+
 export default function Runs() {
   const datasets = useAsync(() => listDatasets(), []);
   const prompts = useAsync(() => listPrompts(), []);
-  const models = useAsync(() => listOllamaModels(), []);
+  const localModels = useAsync(() => listOllamaModels(), []);
+  const providers = useAsync(() => listProviders(), []);
+  const judgeDefaults = useAsync(() => getJudgeDefaults(), []);
   const runs = useAsync(() => listRuns(), []);
+  const toast = useToast();
 
   const [form, setForm] = useState<RunFormState>(defaultForm);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [promptEditorOpen, setPromptEditorOpen] = useState(false);
 
-  const availableModels = useMemo(() => models.data?.models ?? [], [models.data]);
+  // Per-provider state for the API key + the model list returned after a
+  // successful "Test & load models" call. We keep this in component state
+  // (not on the run record) so the key never round-trips through the backend
+  // until the user actually starts a run.
+  const [apiKey, setApiKey] = useState<string>("");
+  const [keyVisible, setKeyVisible] = useState(false);
+  const [providerModels, setProviderModels] = useState<ProviderModel[]>([]);
+  const [keyState, setKeyState] = useState<"empty" | "checking" | "verified" | "error">("empty");
+  const [validating, setValidating] = useState(false);
+
+  const generatorModels = useMemo(() => localModels.data?.models ?? [], [localModels.data]);
+
+  const selectedProvider = useMemo<JudgeProviderInfo | undefined>(
+    () => providers.data?.find((p) => p.key === form.judge_provider),
+    [providers.data, form.judge_provider],
+  );
+  const isLocalJudge = form.judge_provider === "ollama";
+  const requiresKey = selectedProvider?.requires_api_key ?? false;
+
+  // Models offered in the "judge model" dropdown depend on the provider:
+  //   - Ollama: locally installed models
+  //   - Proprietary: whatever `Test & load models` returned (verified key)
+  const judgeModelOptions = useMemo<ProviderModel[]>(() => {
+    if (isLocalJudge) {
+      return generatorModels.map((m) => ({ id: m.name, name: m.name }));
+    }
+    return providerModels;
+  }, [isLocalJudge, generatorModels, providerModels]);
 
   const hasActiveRun = useMemo(
     () => (runs.data ?? []).some((r) => r.status === "running" || r.status === "pending"),
     [runs.data],
   );
 
-  // Poll the runs list while any run is active so the bars update live.
   useEffect(() => {
     if (!hasActiveRun) return;
     const handle = window.setInterval(() => void runs.reload(), 1500);
@@ -69,8 +142,87 @@ export default function Runs() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasActiveRun]);
 
+  // Seed the prompt editor textareas with the canonical defaults the first
+  // time the user expands the editor. We do this lazily (instead of on mount)
+  // so the form state stays "empty == use defaults" until the user actively
+  // engages with the editor — submitting an unmodified form leaves the
+  // backend's defaults in place rather than freezing them into the run.
+  useEffect(() => {
+    if (!promptEditorOpen || !judgeDefaults.data) return;
+    setForm((prev) => {
+      if (prev.judge_system_prompt || prev.judge_user_template) return prev;
+      return {
+        ...prev,
+        judge_system_prompt: judgeDefaults.data!.system_prompt,
+        judge_user_template: judgeDefaults.data!.user_template,
+      };
+    });
+  }, [promptEditorOpen, judgeDefaults.data]);
+
+  function resetPromptToDefault() {
+    if (!judgeDefaults.data) return;
+    setForm((prev) => ({
+      ...prev,
+      judge_system_prompt: judgeDefaults.data!.system_prompt,
+      judge_user_template: judgeDefaults.data!.user_template,
+    }));
+  }
+
+  function toggleCriterion(key: JudgeCriterionKey) {
+    setForm((prev) => {
+      const exists = prev.judge_criteria.includes(key);
+      // Don't allow falling below the minimum — we'd rather block the toggle
+      // than silently re-enable a different criterion.
+      if (exists && prev.judge_criteria.length <= MIN_CRITERIA) {
+        return prev;
+      }
+      const next = exists
+        ? prev.judge_criteria.filter((c) => c !== key)
+        : [...prev.judge_criteria, key];
+      // Keep canonical order regardless of click order.
+      return {
+        ...prev,
+        judge_criteria: ALL_CRITERIA.filter((c) => next.includes(c)),
+      };
+    });
+  }
+
+  // Whenever the user picks a different provider, restore any cached key and
+  // reset the model dropdown / verification status.
+  useEffect(() => {
+    setProviderModels([]);
+    setKeyState("empty");
+    setForm((prev) => ({ ...prev, judge_model: "" }));
+    if (isLocalJudge) {
+      setApiKey("");
+      setKeyVisible(false);
+      return;
+    }
+    const cached = getJudgeKey(form.judge_provider);
+    setApiKey(cached);
+    setKeyVisible(false);
+  }, [form.judge_provider, isLocalJudge]);
+
+  // When the user edits the key after a successful validation, mark the cached
+  // model list stale so they must re-validate before starting a run.
+  useEffect(() => {
+    if (!requiresKey) return;
+    if (keyState === "verified") {
+      setKeyState(apiKey ? "empty" : "empty");
+      setProviderModels([]);
+      setForm((prev) => ({ ...prev, judge_model: "" }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiKey]);
+
   async function refreshAll() {
-    await Promise.all([datasets.reload(), prompts.reload(), models.reload(), runs.reload()]);
+    await Promise.all([
+      datasets.reload(),
+      prompts.reload(),
+      localModels.reload(),
+      providers.reload(),
+      runs.reload(),
+    ]);
   }
 
   function toggleModel(name: string) {
@@ -85,6 +237,44 @@ export default function Runs() {
     });
   }
 
+  const validateKeyAndLoadModels = useCallback(async () => {
+    if (!selectedProvider) return;
+    if (selectedProvider.requires_api_key && !apiKey.trim()) {
+      toast.error("Enter your API key first.");
+      return;
+    }
+    setValidating(true);
+    setKeyState("checking");
+    try {
+      const response = await listProviderModels(selectedProvider.key, apiKey.trim() || null);
+      setProviderModels(response.models);
+      setKeyState("verified");
+      // Cache only after a successful validation, so we never hold onto
+      // strings the user didn't intend to use.
+      if (selectedProvider.requires_api_key) {
+        setJudgeKey(selectedProvider.key, apiKey.trim());
+      }
+      toast.success(
+        `${selectedProvider.name}: found ${response.models.length} model${response.models.length === 1 ? "" : "s"}.`,
+      );
+    } catch (err) {
+      setProviderModels([]);
+      setKeyState("error");
+      const { message, code } = describeApiError(err);
+      const title =
+        code === "invalid_api_key"
+          ? "Invalid API key"
+          : code === "rate_limited"
+            ? "Rate limited"
+            : code === "missing_api_key"
+              ? "API key required"
+              : `${selectedProvider.name} error`;
+      toast.error(message, title);
+    } finally {
+      setValidating(false);
+    }
+  }, [selectedProvider, apiKey, toast]);
+
   async function handleCreate(event: React.FormEvent) {
     event.preventDefault();
     setSubmitError(null);
@@ -93,6 +283,35 @@ export default function Runs() {
       setSubmitError("Pick a dataset, prompt template, and at least one model.");
       return;
     }
+    if (form.judge_model && requiresKey && keyState !== "verified") {
+      setSubmitError(
+        `Validate your ${selectedProvider?.name ?? "judge"} API key with "Test & load models" before starting the run.`,
+      );
+      return;
+    }
+    if (form.judge_model && form.judge_criteria.length < MIN_CRITERIA) {
+      setSubmitError(`Select at least ${MIN_CRITERIA} criteria for the judge to score.`);
+      return;
+    }
+
+    // Only send custom prompts when the user actually edited them (i.e. they
+    // differ from the canonical defaults). Sending `null` preserves the
+    // server's defaults and lets future default-prompt tweaks propagate to
+    // historical configurations.
+    const defaultSystem = judgeDefaults.data?.system_prompt ?? "";
+    const defaultTemplate = judgeDefaults.data?.user_template ?? "";
+    const systemPromptOverride =
+      form.judge_system_prompt && form.judge_system_prompt.trim() !== defaultSystem.trim()
+        ? form.judge_system_prompt
+        : null;
+    const userTemplateOverride =
+      form.judge_user_template && form.judge_user_template.trim() !== defaultTemplate.trim()
+        ? form.judge_user_template
+        : null;
+    // If all 5 are selected, omit the field so the run picks up future
+    // default-rubric changes; if a subset, persist it explicitly.
+    const judgeCriteriaPayload =
+      form.judge_criteria.length === ALL_CRITERIA.length ? null : form.judge_criteria;
 
     const payload: RunCreatePayload = {
       name: form.name || `Run ${new Date().toLocaleString()}`,
@@ -100,6 +319,10 @@ export default function Runs() {
       prompt_template_id: form.prompt_template_id,
       selected_models: form.selected_models,
       judge_model: form.judge_model || null,
+      judge_provider: form.judge_provider,
+      judge_criteria: judgeCriteriaPayload,
+      judge_system_prompt: systemPromptOverride,
+      judge_user_template: userTemplateOverride,
       temperature: form.temperature,
       max_tokens: form.max_tokens,
       repeats: form.repeats,
@@ -109,11 +332,24 @@ export default function Runs() {
     setSubmitting(true);
     try {
       const created = await createRun(payload);
-      await startRun(created.id);
-      setForm(defaultForm);
+      await startRun(created.id, {
+        judge_api_key: form.judge_model && requiresKey ? apiKey.trim() : null,
+      });
+      toast.success(`Run "${created.name}" started.`);
+      // Preserve rubric + prompt edits so the user can immediately spin up a
+      // sibling run without re-configuring; clear only the per-run inputs.
+      setForm((prev) => ({
+        ...defaultForm,
+        judge_provider: prev.judge_provider,
+        judge_criteria: prev.judge_criteria,
+        judge_system_prompt: prev.judge_system_prompt,
+        judge_user_template: prev.judge_user_template,
+      }));
       await runs.reload();
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : String(err));
+      const { message } = describeApiError(err);
+      setSubmitError(message);
+      toast.error(message, "Could not start run");
     } finally {
       setSubmitting(false);
     }
@@ -121,13 +357,35 @@ export default function Runs() {
 
   async function handleDelete(id: number) {
     if (!confirm("Delete this run and all of its outputs?")) return;
-    await deleteRun(id);
-    await runs.reload();
+    try {
+      await deleteRun(id);
+      await runs.reload();
+    } catch (err) {
+      const { message } = describeApiError(err);
+      toast.error(message, "Delete failed");
+    }
   }
 
-  async function handleRestart(id: number) {
-    await startRun(id);
-    await runs.reload();
+  async function handleRestart(run: { id: number; judge_model?: string | null; judge_provider: JudgeProviderKey }) {
+    const providerInfo = providers.data?.find((p) => p.key === run.judge_provider);
+    let key: string | null = null;
+    if (run.judge_model && providerInfo?.requires_api_key) {
+      key = getJudgeKey(run.judge_provider) || null;
+      if (!key) {
+        toast.error(
+          `This run's judge (${providerInfo.name}) needs an API key. Use "New run" above to enter it for this session, then restart.`,
+          "API key required",
+        );
+        return;
+      }
+    }
+    try {
+      await startRun(run.id, { judge_api_key: key });
+      await runs.reload();
+    } catch (err) {
+      const { message } = describeApiError(err);
+      toast.error(message, "Could not start run");
+    }
   }
 
   return (
@@ -189,18 +447,238 @@ export default function Runs() {
           </Select>
 
           <Select
+            label="Judge provider"
+            value={form.judge_provider}
+            onChange={(event) =>
+              setForm((prev) => ({
+                ...prev,
+                judge_provider: event.target.value as JudgeProviderKey,
+              }))
+            }
+            hint={selectedProvider?.description}
+          >
+            {(providers.data ?? []).map((provider) => (
+              <option key={provider.key} value={provider.key}>
+                {provider.name}
+              </option>
+            ))}
+          </Select>
+
+          <Select
             label="Judge model (optional but recommended)"
             value={form.judge_model}
             onChange={(event) => setForm((prev) => ({ ...prev, judge_model: event.target.value }))}
-            hint="Use a different model from your generators when possible."
+            hint={
+              isLocalJudge
+                ? "Use a different model from your generators when possible."
+                : keyState === "verified"
+                  ? `${providerModels.length} model${providerModels.length === 1 ? "" : "s"} available with this key.`
+                  : 'Click "Test & load models" with your API key to populate this list.'
+            }
+            disabled={!isLocalJudge && keyState !== "verified"}
           >
             <option value="">No judge (generation only)</option>
-            {availableModels.map((model) => (
-              <option key={model.name} value={model.name}>
+            {judgeModelOptions.map((model) => (
+              <option key={model.id} value={model.id}>
                 {model.name}
               </option>
             ))}
           </Select>
+
+          {!isLocalJudge && (
+            <div className="md:col-span-2 rounded-xl border border-ink-200 bg-ink-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-ink-800">
+                    {selectedProvider?.name ?? form.judge_provider} API key
+                  </div>
+                  <p className="mt-0.5 text-xs text-ink-500">
+                    Stored only in this browser tab (sessionStorage). Never sent anywhere except
+                    {" "}
+                    <span className="font-medium">{selectedProvider?.name ?? form.judge_provider}</span>
+                    {" "}
+                    via your local backend. Closing the tab clears it.
+                    {selectedProvider?.docs_url && (
+                      <>
+                        {" "}
+                        <a
+                          href={selectedProvider.docs_url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="font-medium text-accent-700 hover:underline"
+                        >
+                          Get a key →
+                        </a>
+                      </>
+                    )}
+                  </p>
+                </div>
+                <Badge
+                  tone={
+                    keyState === "verified"
+                      ? "good"
+                      : keyState === "checking"
+                        ? "info"
+                        : keyState === "error"
+                          ? "danger"
+                          : "neutral"
+                  }
+                >
+                  {keyState === "verified"
+                    ? "Key verified"
+                    : keyState === "checking"
+                      ? "Checking…"
+                      : keyState === "error"
+                        ? "Key rejected"
+                        : "Not verified"}
+                </Badge>
+              </div>
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <div className="flex-1 min-w-[16rem]">
+                  <Input
+                    label="API key"
+                    type={keyVisible ? "text" : "password"}
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder={
+                      selectedProvider?.key === "openai"
+                        ? "sk-…"
+                        : selectedProvider?.key === "anthropic"
+                          ? "sk-ant-…"
+                          : selectedProvider?.key === "gemini"
+                            ? "AIza…"
+                            : "Paste your API key"
+                    }
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setKeyVisible((v) => !v)}
+                >
+                  {keyVisible ? "Hide" : "Show"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void validateKeyAndLoadModels()}
+                  disabled={validating || !apiKey.trim()}
+                >
+                  {validating ? "Testing…" : "Test & load models"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {form.judge_model && (
+            <div className="md:col-span-2 rounded-xl border border-ink-200 bg-white p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-ink-800">Rubric</div>
+                  <p className="mt-0.5 text-xs text-ink-500">
+                    Pick which criteria the judge should score. At least {MIN_CRITERIA} of {ALL_CRITERIA.length} must be selected.
+                  </p>
+                </div>
+                <Badge tone={form.judge_criteria.length === ALL_CRITERIA.length ? "neutral" : "info"}>
+                  {form.judge_criteria.length}/{ALL_CRITERIA.length} selected
+                </Badge>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {(judgeDefaults.data?.criteria ?? ALL_CRITERIA.map((k) => ({ key: k, label: k, description: "" }))).map(
+                  (criterion) => {
+                    const active = form.judge_criteria.includes(criterion.key as JudgeCriterionKey);
+                    const isLastChecked = active && form.judge_criteria.length <= MIN_CRITERIA;
+                    return (
+                      <label
+                        key={criterion.key}
+                        className={
+                          active
+                            ? "flex cursor-pointer items-start gap-2 rounded-lg border border-accent-300 bg-accent-50/60 p-2"
+                            : "flex cursor-pointer items-start gap-2 rounded-lg border border-ink-200 bg-white p-2 hover:bg-ink-50"
+                        }
+                        title={isLastChecked ? `At least ${MIN_CRITERIA} criteria are required.` : undefined}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-accent-600"
+                          checked={active}
+                          disabled={isLastChecked}
+                          onChange={() => toggleCriterion(criterion.key as JudgeCriterionKey)}
+                        />
+                        <span>
+                          <span className="block text-sm font-medium text-ink-800">{criterion.label}</span>
+                          {criterion.description && (
+                            <span className="block text-xs text-ink-500">{criterion.description}</span>
+                          )}
+                        </span>
+                      </label>
+                    );
+                  },
+                )}
+              </div>
+
+              <details
+                className="mt-4 rounded-lg border border-ink-200 bg-ink-50/60 p-3"
+                open={promptEditorOpen}
+                onToggle={(event) => setPromptEditorOpen((event.target as HTMLDetailsElement).open)}
+              >
+                <summary className="cursor-pointer text-sm font-medium text-ink-700">
+                  Advanced: customize judge prompt
+                </summary>
+                <div className="mt-3 space-y-3">
+                  <p className="text-xs text-ink-500">
+                    Both prompts default to the same wording the LLM-judge has always used.
+                    {" "}
+                    Supported placeholders:
+                    {" "}
+                    {(judgeDefaults.data?.placeholders ?? ["{{input}}", "{{reference}}", "{{output}}", "{{criteria_block}}"]).map(
+                      (ph) => (
+                        <code
+                          key={ph}
+                          className="ml-1 rounded bg-white px-1 py-0.5 font-mono text-[11px] text-ink-700"
+                        >
+                          {ph}
+                        </code>
+                      ),
+                    )}
+                    . Leaving a field blank also falls back to the default.
+                  </p>
+                  <Textarea
+                    label="System prompt"
+                    rows={3}
+                    value={form.judge_system_prompt}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, judge_system_prompt: event.target.value }))
+                    }
+                  />
+                  <Textarea
+                    label="User prompt template"
+                    rows={10}
+                    value={form.judge_user_template}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, judge_user_template: event.target.value }))
+                    }
+                    hint="Keep {{criteria_block}} in the template so the rubric stays in sync with the checkboxes above."
+                  />
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={resetPromptToDefault}
+                      disabled={!judgeDefaults.data}
+                    >
+                      Reset to default
+                    </Button>
+                  </div>
+                </div>
+              </details>
+            </div>
+          )}
 
           <Input
             label="Temperature"
@@ -227,12 +705,12 @@ export default function Runs() {
           <div className="md:col-span-2">
             <div className="mb-1 text-sm font-medium text-ink-700">Generator models</div>
             <div className="flex flex-wrap gap-2 rounded-lg border border-ink-200 bg-white p-3">
-              {availableModels.length === 0 ? (
+              {generatorModels.length === 0 ? (
                 <p className="text-sm text-ink-500">
                   No Ollama models detected. Pull at least one model and refresh.
                 </p>
               ) : (
-                availableModels.map((model) => {
+                generatorModels.map((model) => {
                   const active = form.selected_models.includes(model.name);
                   return (
                     <button
@@ -318,7 +796,18 @@ export default function Runs() {
                     </div>
                   </td>
                   <td className="px-2 py-3 text-xs text-ink-600">
-                    {run.judge_model ? <Badge tone="neutral">{run.judge_model}</Badge> : "—"}
+                    {run.judge_model ? (
+                      <div className="flex flex-col gap-0.5">
+                        <Badge tone="neutral">{run.judge_model}</Badge>
+                        {run.judge_provider && run.judge_provider !== "ollama" && (
+                          <span className="text-[10px] uppercase tracking-wide text-ink-400">
+                            via {run.judge_provider}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      "—"
+                    )}
                   </td>
                   <td className="px-2 py-3"><StatusBadge status={run.status} /></td>
                   <td className="px-2 py-3 text-xs text-ink-600">
@@ -358,7 +847,7 @@ export default function Runs() {
                   <td className="px-2 py-3 text-right">
                     <div className="flex justify-end gap-1">
                       {run.status !== "running" && (
-                        <Button variant="secondary" size="sm" onClick={() => void handleRestart(run.id)}>
+                        <Button variant="secondary" size="sm" onClick={() => void handleRestart(run)}>
                           {run.status === "completed" ? "Re-run" : "Start"}
                         </Button>
                       )}
