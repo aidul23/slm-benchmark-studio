@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from sqlmodel import Session, select
 
 from ..database import get_session
-from ..models.benchmark_run import BenchmarkRun, RunStatus
+from ..models.benchmark_run import BenchmarkRun, EvaluationMode, RunStatus, normalize_evaluation_mode, resolve_evaluation_mode
 from ..models.benchmark_score import BenchmarkScore
 from ..models.dataset import Dataset
 from ..models.judge_score import JudgeScore
@@ -25,9 +25,14 @@ from ..services.benchmark_runner import start_run_background
 from ..services.export_service import run_results_to_csv
 from ..services.judge_runner import ALL_CRITERIA_KEYS, MIN_CRITERIA
 from ..services.providers import get_provider
+from .datasets import _dataset_kind
 
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
+
+
+def _resolve_evaluation_mode(run: BenchmarkRun) -> EvaluationMode:
+    return resolve_evaluation_mode(run)
 
 
 def _to_read(run: BenchmarkRun) -> RunRead:
@@ -51,6 +56,7 @@ def _to_read(run: BenchmarkRun) -> RunRead:
         dataset_id=run.dataset_id,
         prompt_template_id=run.prompt_template_id,
         selected_models=selected,
+        evaluation_mode=_resolve_evaluation_mode(run),
         judge_model=run.judge_model,
         judge_provider=run.judge_provider or "ollama",
         judge_criteria=criteria,
@@ -88,8 +94,27 @@ def create_run(payload: RunCreate, session: Session = Depends(get_session)) -> R
     if not payload.selected_models:
         raise HTTPException(status_code=400, detail="Select at least one model")
 
+    mode = payload.evaluation_mode or EvaluationMode.JUDGE
+    kind = _dataset_kind(session, payload.dataset_id)
+    if mode == EvaluationMode.BENCHMARK and kind != "benchmark":
+        raise HTTPException(
+            status_code=400,
+            detail="Benchmark evaluation requires a benchmark dataset (import MMLU or HellaSwag from Datasets).",
+        )
+    if mode == EvaluationMode.JUDGE and kind == "benchmark":
+        raise HTTPException(
+            status_code=400,
+            detail="LLM-as-judge evaluation requires a general dataset — upload JSONL or create a custom dataset, not a standard benchmark import.",
+        )
+
+    judge_model = payload.judge_model
     provider_key = (payload.judge_provider or "ollama").strip().lower()
-    if payload.judge_model and get_provider(provider_key) is None:
+    if mode == EvaluationMode.BENCHMARK:
+        judge_model = None
+        provider_key = "ollama"
+    elif not judge_model:
+        raise HTTPException(status_code=400, detail="Select a judge model for LLM-as-judge evaluation.")
+    elif get_provider(provider_key) is None:
         raise HTTPException(status_code=400, detail=f"Unknown judge provider '{provider_key}'")
 
     config = {
@@ -105,13 +130,18 @@ def create_run(payload: RunCreate, session: Session = Depends(get_session)) -> R
     criteria_json = json.dumps(payload.judge_criteria) if payload.judge_criteria else None
     system_prompt = (payload.judge_system_prompt or "").strip() or None
     user_template = (payload.judge_user_template or "").strip() or None
+    if mode == EvaluationMode.BENCHMARK:
+        criteria_json = None
+        system_prompt = None
+        user_template = None
 
     run = BenchmarkRun(
         name=payload.name,
         dataset_id=payload.dataset_id,
         prompt_template_id=payload.prompt_template_id,
         selected_models_json=json.dumps(payload.selected_models),
-        judge_model=payload.judge_model,
+        evaluation_mode=normalize_evaluation_mode(mode),
+        judge_model=judge_model,
         judge_provider=provider_key,
         judge_criteria_json=criteria_json,
         judge_system_prompt=system_prompt,

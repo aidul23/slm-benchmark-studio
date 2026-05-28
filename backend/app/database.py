@@ -57,6 +57,7 @@ def _run_lightweight_migrations() -> None:
             ("judge_criteria_json", "TEXT"),
             ("judge_system_prompt", "TEXT"),
             ("judge_user_template", "TEXT"),
+            ("evaluation_mode", "TEXT DEFAULT 'judge'"),
         ],
     }
 

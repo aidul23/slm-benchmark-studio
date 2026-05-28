@@ -24,6 +24,20 @@ from ..utils.jsonl import metadata_from_json, metadata_to_json, parse_jsonl
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
 
+def _dataset_kind(session: Session, dataset_id: int) -> str:
+    """Return 'benchmark' if any example has metadata.task_type, else 'general'."""
+    rows = session.exec(
+        select(DatasetExample)
+        .where(DatasetExample.dataset_id == dataset_id)
+        .limit(50)
+    ).all()
+    for row in rows:
+        meta = metadata_from_json(row.metadata_json) or {}
+        if meta.get("task_type"):
+            return "benchmark"
+    return "general"
+
+
 def _to_dataset_read(session: Session, dataset: Dataset) -> DatasetRead:
     count = session.exec(
         select(func.count(DatasetExample.id)).where(DatasetExample.dataset_id == dataset.id)
@@ -36,6 +50,7 @@ def _to_dataset_read(session: Session, dataset: Dataset) -> DatasetRead:
         description=dataset.description,
         created_at=dataset.created_at,
         example_count=int(count or 0),
+        kind=_dataset_kind(session, dataset.id or 0),
     )
 
 

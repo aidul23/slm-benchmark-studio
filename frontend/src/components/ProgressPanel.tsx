@@ -124,11 +124,16 @@ function labelForStatus(run: BenchmarkRun): string {
     case "pending":
       return "Queued — waiting to start";
     case "running":
-      return run.current_phase === "judging"
-        ? "Judging outputs…"
-        : run.current_phase === "finalizing"
-          ? "Finalizing run…"
-          : "Generating outputs…";
+      if (run.current_phase === "benchmark_scoring") {
+        return "Scoring benchmark outputs…";
+      }
+      if (run.current_phase === "judging") {
+        return "Judging outputs…";
+      }
+      if (run.current_phase === "finalizing") {
+        return "Finalizing run…";
+      }
+      return "Generating outputs…";
     case "completed":
       return "Run completed";
     case "failed":

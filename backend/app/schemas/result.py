@@ -138,6 +138,14 @@ class InsightsOverview(BaseModel):
     by_model: List[ModelSummary] = Field(default_factory=list)
     benchmarks: List[BenchmarkBreakdown] = Field(default_factory=list)
     benchmark_by_model: List[BenchmarkModelStat] = Field(default_factory=list)
+    benchmark_models: List[ModelSummary] = Field(
+        default_factory=list,
+        description="Model summaries pooled from benchmark-mode runs only (for accuracy vs latency charts).",
+    )
+    all_models: List[ModelSummary] = Field(
+        default_factory=list,
+        description="Model summaries pooled across all runs (for shared latency charts).",
+    )
 
 
 class HumanReviewUpdate(BaseModel):

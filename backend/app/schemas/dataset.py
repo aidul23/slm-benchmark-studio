@@ -18,6 +18,10 @@ class DatasetRead(BaseModel):
     description: Optional[str] = None
     created_at: datetime
     example_count: int = 0
+    kind: str = Field(
+        default="general",
+        description="'benchmark' when examples carry metadata.task_type (MMLU/HellaSwag imports); else 'general'.",
+    )
 
 
 class ExampleCreate(BaseModel):

@@ -13,11 +13,14 @@ export class ApiError extends Error {
 
 async function handle<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    let payload: unknown = null;
-    try {
-      payload = await response.json();
-    } catch {
-      payload = await response.text();
+    const text = await response.text();
+    let payload: unknown = text;
+    if (text) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        // keep raw text
+      }
     }
     const detail =
       (payload as { detail?: unknown })?.detail ??

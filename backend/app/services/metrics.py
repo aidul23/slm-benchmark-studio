@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlmodel import Session, select
 
-from ..models.benchmark_run import BenchmarkRun
+from ..models.benchmark_run import BenchmarkRun, EvaluationMode, resolve_evaluation_mode
 from ..models.benchmark_score import BenchmarkScore
 from ..models.example import DatasetExample
 from ..models.judge_score import JudgeScore
@@ -334,6 +334,10 @@ def build_insights_overview(session: Session) -> InsightsOverview:
     total_datasets = len(session.exec(select(Dataset)).all())
     runs = session.exec(select(BenchmarkRun).order_by(BenchmarkRun.created_at.desc())).all()
     total_runs = len(runs)
+    run_mode_by_id: Dict[int, str] = {}
+    for run in runs:
+        if run.id is not None:
+            run_mode_by_id[run.id] = resolve_evaluation_mode(run).value
 
     rows: List[ResultRow] = []
     for run in runs:
@@ -341,21 +345,28 @@ def build_insights_overview(session: Session) -> InsightsOverview:
             continue
         rows.extend(fetch_result_rows(session, run.id))
 
-    summaries = _build_summary(rows)
+    judge_rows = [r for r in rows if run_mode_by_id.get(r.run_id) == EvaluationMode.JUDGE.value]
+    benchmark_rows = [r for r in rows if run_mode_by_id.get(r.run_id) == EvaluationMode.BENCHMARK.value]
+
+    judge_summaries = _build_summary(judge_rows)
+    benchmark_summaries = _build_summary(benchmark_rows)
+    all_summaries = _build_summary(rows)
 
     best_model = None
     fastest_model = None
     best_benchmark_model = None
-    if summaries:
-        scored = [s for s in summaries if s.avg_overall is not None]
+    if judge_summaries:
+        scored = [s for s in judge_summaries if s.avg_overall is not None]
         if scored:
             top = max(scored, key=lambda s: s.avg_overall or 0)
             best_model = {"model_name": top.model_name, "avg_overall": top.avg_overall}
-        timed = [s for s in summaries if s.avg_latency_ms is not None]
+    if all_summaries:
+        timed = [s for s in all_summaries if s.avg_latency_ms is not None]
         if timed:
             fastest = min(timed, key=lambda s: s.avg_latency_ms or float("inf"))
             fastest_model = {"model_name": fastest.model_name, "avg_latency_ms": fastest.avg_latency_ms}
-        benched = [s for s in summaries if s.benchmark_accuracy is not None and s.benchmark_count > 0]
+    if benchmark_summaries:
+        benched = [s for s in benchmark_summaries if s.benchmark_accuracy is not None and s.benchmark_count > 0]
         if benched:
             top_bench = max(benched, key=lambda s: s.benchmark_accuracy or 0)
             best_benchmark_model = {
@@ -371,14 +382,15 @@ def build_insights_overview(session: Session) -> InsightsOverview:
                 "id": run.id,
                 "name": run.name,
                 "status": run.status.value if hasattr(run.status, "value") else str(run.status),
+                "evaluation_mode": resolve_evaluation_mode(run).value,
                 "created_at": run.created_at.isoformat() if run.created_at else None,
                 "progress_done": run.progress_done,
                 "progress_total": run.progress_total,
             }
         )
 
-    benchmarks_pool = _pool_benchmarks(rows)
-    benchmark_by_model = _benchmark_by_model(rows)
+    benchmarks_pool = _pool_benchmarks(benchmark_rows)
+    benchmark_by_model = _benchmark_by_model(benchmark_rows)
 
     best_per_benchmark: List[Dict[str, Any]] = []
     for bench_row in benchmarks_pool:
@@ -407,9 +419,11 @@ def build_insights_overview(session: Session) -> InsightsOverview:
         best_model_by_benchmark=best_benchmark_model,
         best_per_benchmark=best_per_benchmark,
         recent_runs=recent_runs,
-        by_model=summaries,
+        by_model=judge_summaries,
         benchmarks=benchmarks_pool,
         benchmark_by_model=benchmark_by_model,
+        benchmark_models=benchmark_summaries,
+        all_models=all_summaries,
     )
 
 

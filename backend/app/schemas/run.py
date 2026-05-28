@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..models.benchmark_run import RunStatus
+from ..models.benchmark_run import EvaluationMode, RunStatus
 from ..services.judge_runner import ALL_CRITERIA_KEYS, MIN_CRITERIA
 
 
@@ -15,6 +15,10 @@ class RunCreate(BaseModel):
     dataset_id: int
     prompt_template_id: int
     selected_models: List[str] = Field(min_length=1)
+    evaluation_mode: EvaluationMode = Field(
+        default=EvaluationMode.JUDGE,
+        description="Scoring path after generation: 'benchmark' (deterministic MCQ) or 'judge' (LLM rubric).",
+    )
     judge_model: Optional[str] = None
     judge_provider: str = Field(
         default="ollama",
@@ -74,6 +78,7 @@ class RunRead(BaseModel):
     dataset_id: int
     prompt_template_id: int
     selected_models: List[str]
+    evaluation_mode: EvaluationMode = EvaluationMode.JUDGE
     judge_model: Optional[str] = None
     judge_provider: str = "ollama"
     judge_criteria: List[str] = Field(

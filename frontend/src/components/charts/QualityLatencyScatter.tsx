@@ -9,9 +9,9 @@ import {
   ZAxis,
   Legend,
 } from "recharts";
-import type { ModelSummary } from "../../types";
 
-const PALETTE = ["#4f46e5", "#0ea5e9", "#10b981", "#f97316", "#ef4444", "#a855f7", "#14b8a6", "#eab308"];
+import { modelChartStyle } from "../../lib/modelProviders";
+import type { ModelSummary } from "../../types";
 
 interface Props {
   data: ModelSummary[];
@@ -53,20 +53,23 @@ export default function QualityLatencyScatter({ data }: Props) {
             }}
           />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          {data.map((row, index) => (
-            <Scatter
-              key={row.model_name}
-              name={row.model_name}
-              data={[
-                {
-                  x: row.avg_latency_ms ?? 0,
-                  y: row.avg_overall ?? 0,
-                  z: row.count,
-                },
-              ]}
-              fill={PALETTE[index % PALETTE.length]}
-            />
-          ))}
+          {data.map((row) => {
+            const style = modelChartStyle(row.model_name);
+            return (
+              <Scatter
+                key={row.model_name}
+                name={row.model_name}
+                data={[
+                  {
+                    x: row.avg_latency_ms ?? 0,
+                    y: row.avg_overall ?? 0,
+                    z: row.count,
+                  },
+                ]}
+                fill={style.color}
+              />
+            );
+          })}
         </ScatterChart>
       </ResponsiveContainer>
     </div>

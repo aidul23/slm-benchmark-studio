@@ -10,9 +10,8 @@ import {
   ZAxis,
 } from "recharts";
 
+import { modelChartStyle } from "../../lib/modelProviders";
 import type { ModelSummary } from "../../types";
-
-const PALETTE = ["#4f46e5", "#0ea5e9", "#10b981", "#f97316", "#ef4444", "#a855f7", "#14b8a6", "#eab308"];
 
 interface Props {
   data: ModelSummary[];
@@ -67,20 +66,23 @@ export default function AccuracyLatencyScatter({ data }: Props) {
             }}
           />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          {points.map((row, index) => (
-            <Scatter
-              key={row.model_name}
-              name={row.model_name}
-              data={[
-                {
-                  x: row.avg_latency_ms ?? 0,
-                  y: (row.benchmark_accuracy ?? 0) * 100,
-                  z: row.benchmark_count,
-                },
-              ]}
-              fill={PALETTE[index % PALETTE.length]}
-            />
-          ))}
+          {points.map((row) => {
+            const style = modelChartStyle(row.model_name);
+            return (
+              <Scatter
+                key={row.model_name}
+                name={row.model_name}
+                data={[
+                  {
+                    x: row.avg_latency_ms ?? 0,
+                    y: (row.benchmark_accuracy ?? 0) * 100,
+                    z: row.benchmark_count,
+                  },
+                ]}
+                fill={style.color}
+              />
+            );
+          })}
         </ScatterChart>
       </ResponsiveContainer>
     </div>
