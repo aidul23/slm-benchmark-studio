@@ -18,6 +18,7 @@ from .routers import (
     prompts,
     providers,
     runs,
+    workshop,
 )
 
 
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(runs.router)
     app.include_router(insights.router)
     app.include_router(benchmarks.router)
+    app.include_router(workshop.router)
 
     return app
 

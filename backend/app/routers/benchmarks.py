@@ -23,6 +23,7 @@ from ..schemas.benchmark import (
 from ..services.benchmark_loaders import LoaderRequest, catalog, get_loader
 from ..services.benchmark_loaders.hf_client import HFDatasetServerError
 from ..utils.jsonl import metadata_to_json
+from ..workshop import ParticipantContext, get_participant, owner_key_for_create
 
 
 router = APIRouter(prefix="/api/benchmarks", tags=["benchmarks"])
@@ -54,6 +55,7 @@ def get_catalog() -> BenchmarkCatalog:
 def import_benchmark(
     payload: BenchmarkImportRequest,
     session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
 ) -> BenchmarkImportResponse:
     loader = get_loader(payload.benchmark)
     if loader is None:
@@ -85,7 +87,11 @@ def import_benchmark(
 
     dataset_name = payload.name or _default_name(payload, result.fetched)
     description = payload.description or _default_description(payload, result)
-    dataset = Dataset(name=dataset_name, description=description)
+    dataset = Dataset(
+        name=dataset_name,
+        description=description,
+        owner_key=owner_key_for_create(participant),
+    )
     session.add(dataset)
     session.commit()
     session.refresh(dataset)

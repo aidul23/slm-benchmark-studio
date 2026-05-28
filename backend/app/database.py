@@ -58,6 +58,13 @@ def _run_lightweight_migrations() -> None:
             ("judge_system_prompt", "TEXT"),
             ("judge_user_template", "TEXT"),
             ("evaluation_mode", "TEXT DEFAULT 'judge'"),
+            ("owner_key", "TEXT"),
+        ],
+        "datasets": [
+            ("owner_key", "TEXT"),
+        ],
+        "prompt_templates": [
+            ("owner_key", "TEXT"),
         ],
     }
 

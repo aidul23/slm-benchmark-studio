@@ -1,4 +1,10 @@
+import { getWorkshopHeaders } from "../lib/participant";
+
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "";
+
+function buildHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return { ...getWorkshopHeaders(), ...extra };
+}
 
 export class ApiError extends Error {
   status: number;
@@ -41,7 +47,7 @@ async function handle<T>(response: Response): Promise<T> {
 export async function apiGet<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "GET",
-    headers: { Accept: "application/json" },
+    headers: buildHeaders({ Accept: "application/json" }),
   });
   return handle<T>(response);
 }
@@ -49,10 +55,10 @@ export async function apiGet<T>(path: string): Promise<T> {
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
-    headers: {
+    headers: buildHeaders({
       "Content-Type": "application/json",
       Accept: "application/json",
-    },
+    }),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return handle<T>(response);
@@ -61,10 +67,10 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
 export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "PUT",
-    headers: {
+    headers: buildHeaders({
       "Content-Type": "application/json",
       Accept: "application/json",
-    },
+    }),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return handle<T>(response);
@@ -73,23 +79,27 @@ export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
 export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "PATCH",
-    headers: {
+    headers: buildHeaders({
       "Content-Type": "application/json",
       Accept: "application/json",
-    },
+    }),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return handle<T>(response);
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`, { method: "DELETE" });
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "DELETE",
+    headers: buildHeaders(),
+  });
   return handle<T>(response);
 }
 
 export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
+    headers: buildHeaders(),
     body: formData,
   });
   return handle<T>(response);

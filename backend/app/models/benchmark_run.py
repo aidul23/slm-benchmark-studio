@@ -28,6 +28,7 @@ class BenchmarkRun(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
+    owner_key: Optional[str] = Field(default=None, index=True)
     dataset_id: int = Field(foreign_key="datasets.id", index=True)
     prompt_template_id: int = Field(foreign_key="prompt_templates.id", index=True)
     selected_models_json: str = Field(description="JSON list of model names used as generators")

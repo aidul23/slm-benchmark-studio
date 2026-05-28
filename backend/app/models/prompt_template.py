@@ -15,5 +15,6 @@ class PromptTemplate(SQLModel, table=True):
     system_prompt: Optional[str] = Field(default=None)
     template: str = Field(description="User-message template with {{variable}} placeholders")
     version: int = Field(default=1)
+    owner_key: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     notes: Optional[str] = Field(default=None)

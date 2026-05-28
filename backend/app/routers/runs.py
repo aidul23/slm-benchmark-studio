@@ -25,6 +25,15 @@ from ..services.benchmark_runner import start_run_background
 from ..services.export_service import run_results_to_csv
 from ..services.judge_runner import ALL_CRITERIA_KEYS, MIN_CRITERIA
 from ..services.providers import get_provider
+from ..workshop import (
+    ParticipantContext,
+    assert_dataset_usable,
+    assert_prompt_usable,
+    filter_runs_query,
+    get_participant,
+    get_run_or_404,
+    owner_key_for_create,
+)
 from .datasets import _dataset_kind
 
 
@@ -78,19 +87,30 @@ def _to_read(run: BenchmarkRun) -> RunRead:
 
 
 @router.get("", response_model=List[RunRead])
-def list_runs(session: Session = Depends(get_session)) -> List[RunRead]:
-    runs = session.exec(select(BenchmarkRun).order_by(BenchmarkRun.created_at.desc())).all()
+def list_runs(
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> List[RunRead]:
+    query = select(BenchmarkRun).order_by(BenchmarkRun.created_at.desc())
+    query = filter_runs_query(participant, query)
+    runs = session.exec(query).all()
     return [_to_read(r) for r in runs]
 
 
 @router.post("", response_model=RunRead)
-def create_run(payload: RunCreate, session: Session = Depends(get_session)) -> RunRead:
+def create_run(
+    payload: RunCreate,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> RunRead:
     dataset = session.get(Dataset, payload.dataset_id)
     if dataset is None:
         raise HTTPException(status_code=400, detail="Dataset not found")
+    assert_dataset_usable(dataset, participant)
     template = session.get(PromptTemplate, payload.prompt_template_id)
     if template is None:
         raise HTTPException(status_code=400, detail="Prompt template not found")
+    assert_prompt_usable(template, participant)
     if not payload.selected_models:
         raise HTTPException(status_code=400, detail="Select at least one model")
 
@@ -137,6 +157,7 @@ def create_run(payload: RunCreate, session: Session = Depends(get_session)) -> R
 
     run = BenchmarkRun(
         name=payload.name,
+        owner_key=owner_key_for_create(participant),
         dataset_id=payload.dataset_id,
         prompt_template_id=payload.prompt_template_id,
         selected_models_json=json.dumps(payload.selected_models),
@@ -157,18 +178,23 @@ def create_run(payload: RunCreate, session: Session = Depends(get_session)) -> R
 
 
 @router.get("/{run_id}", response_model=RunRead)
-def get_run(run_id: int, session: Session = Depends(get_session)) -> RunRead:
-    run = session.get(BenchmarkRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+def get_run(
+    run_id: int,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> RunRead:
+    run = get_run_or_404(session, run_id, participant)
     return _to_read(run)
 
 
 @router.patch("/{run_id}", response_model=RunRead)
-def update_run(run_id: int, payload: RunUpdate, session: Session = Depends(get_session)) -> RunRead:
-    run = session.get(BenchmarkRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+def update_run(
+    run_id: int,
+    payload: RunUpdate,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> RunRead:
+    run = get_run_or_404(session, run_id, participant)
     data = payload.model_dump(exclude_unset=True)
     for key, value in data.items():
         setattr(run, key, value)
@@ -184,10 +210,9 @@ def start_run(
     background_tasks: BackgroundTasks,
     payload: RunStartRequest | None = None,
     session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
 ) -> RunRead:
-    run = session.get(BenchmarkRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+    run = get_run_or_404(session, run_id, participant)
     if run.status == RunStatus.RUNNING:
         raise HTTPException(status_code=409, detail="Run already in progress")
 
@@ -220,10 +245,12 @@ def start_run(
 
 
 @router.delete("/{run_id}")
-def delete_run(run_id: int, session: Session = Depends(get_session)) -> dict:
-    run = session.get(BenchmarkRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+def delete_run(
+    run_id: int,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> dict:
+    run = get_run_or_404(session, run_id, participant)
 
     outputs = session.exec(select(ModelOutput).where(ModelOutput.run_id == run_id)).all()
     output_ids = [o.id for o in outputs if o.id is not None]
@@ -240,18 +267,22 @@ def delete_run(run_id: int, session: Session = Depends(get_session)) -> dict:
 
 
 @router.get("/{run_id}/results", response_model=List[ResultRow])
-def get_results(run_id: int, session: Session = Depends(get_session)) -> List[ResultRow]:
-    run = session.get(BenchmarkRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+def get_results(
+    run_id: int,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> List[ResultRow]:
+    get_run_or_404(session, run_id, participant)
     return metrics.fetch_result_rows(session, run_id)
 
 
 @router.get("/{run_id}/summary", response_model=RunSummary)
-def get_summary(run_id: int, session: Session = Depends(get_session)) -> RunSummary:
-    run = session.get(BenchmarkRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+def get_summary(
+    run_id: int,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> RunSummary:
+    get_run_or_404(session, run_id, participant)
     return metrics.build_run_summary(session, run_id)
 
 
@@ -261,7 +292,9 @@ def update_human_review(
     output_id: int,
     payload: HumanReviewUpdate,
     session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
 ) -> dict:
+    get_run_or_404(session, run_id, participant)
     output = session.get(ModelOutput, output_id)
     if output is None or output.run_id != run_id:
         raise HTTPException(status_code=404, detail="Output not found")
@@ -277,10 +310,12 @@ def update_human_review(
 
 
 @router.get("/{run_id}/export.csv")
-def export_run_csv(run_id: int, session: Session = Depends(get_session)) -> Response:
-    run = session.get(BenchmarkRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+def export_run_csv(
+    run_id: int,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> Response:
+    get_run_or_404(session, run_id, participant)
     payload = run_results_to_csv(session, run_id)
     return Response(
         content=payload,

@@ -1,6 +1,9 @@
 import { NavLink, Outlet } from "react-router-dom";
 import clsx from "clsx";
 
+import { useParticipant } from "./ParticipantProvider";
+import { Button } from "./ui";
+
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/datasets", label: "Datasets" },
@@ -12,6 +15,8 @@ const NAV_ITEMS = [
 ];
 
 export default function Layout() {
+  const { workshopMode, participantId, isAdminView, switchParticipant } = useParticipant();
+
   return (
     <div className="flex min-h-screen w-full bg-ink-50 text-ink-900">
       <aside className="hidden w-60 shrink-0 border-r border-ink-200 bg-white lg:flex lg:flex-col">
@@ -43,6 +48,27 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+        {workshopMode && (
+          <div className="border-t border-ink-200 px-4 py-3">
+            <div className="rounded-lg bg-accent-50 px-3 py-2 text-xs">
+              <div className="font-medium text-accent-800">
+                {isAdminView ? "Instructor view" : "Signed in as"}
+              </div>
+              <div className="mt-0.5 font-mono text-accent-700">
+                {isAdminView ? "All participants" : participantId}
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="mt-2 w-full justify-start px-0 text-accent-700 hover:bg-transparent hover:text-accent-900"
+                onClick={switchParticipant}
+              >
+                Switch user
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="border-t border-ink-200 px-4 py-4 text-xs text-ink-500">
         <div className="space-y-2">
           <a
