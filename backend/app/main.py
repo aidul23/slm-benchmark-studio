@@ -97,6 +97,20 @@ def _seed_default_prompts() -> None:
                 "it so the system prompt can enforce a single-letter answer."
             ),
         ),
+        dict(
+            name="Code benchmark (HumanEval)",
+            system_prompt=(
+                "You are an expert Python programmer. Complete the function shown in the user "
+                "message. Output only the indented function body — the implementation lines "
+                "inside the function. Do not repeat imports, the def line, docstring, or "
+                "markdown code fences."
+            ),
+            template="{{input}}",
+            notes=(
+                "Designed for HumanEval imports. The input contains the function signature "
+                "and docstring; respond with the implementation body only."
+            ),
+        ),
     ]
 
     with session_scope() as session:

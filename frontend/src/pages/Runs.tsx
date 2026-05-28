@@ -430,7 +430,7 @@ export default function Runs() {
         <div>
           <h1 className="text-2xl font-semibold text-ink-900">Benchmark runs</h1>
           <p className="mt-1 text-sm text-ink-500">
-            Choose benchmark scoring (MMLU/HellaSwag) or LLM-as-judge — one evaluation path per run.
+            Choose benchmark scoring (MMLU, HellaSwag, HumanEval) or LLM-as-judge — one evaluation path per run.
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={() => void refreshAll()}>
@@ -451,7 +451,7 @@ export default function Runs() {
                   {
                     key: "benchmark" as EvaluationMode,
                     label: "Standard benchmark",
-                    hint: "MMLU, HellaSwag — deterministic A/B/C/D accuracy",
+                    hint: "MMLU, HellaSwag, HumanEval — deterministic accuracy (MCQ or code tests)",
                   },
                   {
                     key: "judge" as EvaluationMode,
@@ -503,7 +503,7 @@ export default function Runs() {
             }
             hint={
               isBenchmarkMode
-                ? "Only datasets imported from MMLU/HellaSwag appear here."
+                ? "Only imported benchmark datasets appear here (MMLU, HellaSwag, HumanEval). Use the Code prompt for HumanEval."
                 : "Upload JSONL on the Datasets page — benchmark imports are excluded."
             }
           >

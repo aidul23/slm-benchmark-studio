@@ -10,6 +10,7 @@ from typing import Callable, Dict, List, Optional
 
 from .base import BenchmarkLoaderInfo, BenchmarkLoadResult, LoaderRequest
 from .hellaswag import HELLASWAG_INFO, load_hellaswag
+from .humaneval import HUMANEVAL_INFO, load_humaneval
 from .mmlu import MMLU_INFO, load_mmlu
 
 Loader = Callable[[LoaderRequest], BenchmarkLoadResult]
@@ -17,9 +18,10 @@ Loader = Callable[[LoaderRequest], BenchmarkLoadResult]
 _REGISTRY: Dict[str, Loader] = {
     "mmlu": load_mmlu,
     "hellaswag": load_hellaswag,
+    "humaneval": load_humaneval,
 }
 
-_CATALOG: List[BenchmarkLoaderInfo] = [MMLU_INFO, HELLASWAG_INFO]
+_CATALOG: List[BenchmarkLoaderInfo] = [MMLU_INFO, HELLASWAG_INFO, HUMANEVAL_INFO]
 
 
 def get_loader(key: str) -> Optional[Loader]:

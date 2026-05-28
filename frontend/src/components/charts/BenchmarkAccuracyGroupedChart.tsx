@@ -25,6 +25,7 @@ interface Props {
 const BENCHMARK_LABELS: Record<string, string> = {
   mmlu: "MMLU",
   hellaswag: "HellaSwag",
+  humaneval: "HumanEval",
 };
 
 function labelFor(key: string): string {

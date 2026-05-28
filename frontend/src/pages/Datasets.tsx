@@ -216,7 +216,7 @@ function BenchmarkImportCard({ onImported }: { onImported: () => Promise<void> |
   return (
     <Card
       title="Import a standard benchmark"
-      description="Pull MMLU or HellaSwag straight from HuggingFace and turn it into a scoreable dataset."
+      description="Import MMLU, HellaSwag, or HumanEval from HuggingFace and turn it into a scoreable dataset."
     >
       {catalog.loading && <LoadingState label="Loading benchmark catalog..." />}
       {catalog.error && <ErrorState message={catalog.error} />}

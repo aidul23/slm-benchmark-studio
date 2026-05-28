@@ -9,12 +9,14 @@ from __future__ import annotations
 from typing import Callable, Dict, Optional
 
 from .base import BenchmarkScoreResult, ScorerContext
+from .code import score_code
 from .mcq import score_mcq
 
 Scorer = Callable[[ScorerContext], BenchmarkScoreResult]
 
 _REGISTRY: Dict[str, Scorer] = {
     "mcq": score_mcq,
+    "code": score_code,
 }
 
 
