@@ -327,12 +327,21 @@ def _slice_average(rows: List[ResultRow], key_fn) -> Dict[str, Dict[str, float]]
     return out
 
 
-def build_insights_overview(session: Session) -> InsightsOverview:
-    """High-level dashboard metrics across all runs."""
+def build_insights_overview(session: Session, participant=None) -> InsightsOverview:
+    """High-level dashboard metrics across runs visible to the caller."""
     from ..models.dataset import Dataset  # local import to avoid circular
+    from ..workshop import ParticipantContext, filter_datasets_query, filter_runs_query
 
-    total_datasets = len(session.exec(select(Dataset)).all())
-    runs = session.exec(select(BenchmarkRun).order_by(BenchmarkRun.created_at.desc())).all()
+    if participant is None:
+        participant = ParticipantContext(key=None, scoped=False)
+
+    dataset_query = select(Dataset)
+    dataset_query = filter_datasets_query(participant, dataset_query)
+    total_datasets = len(session.exec(dataset_query).all())
+
+    runs_query = select(BenchmarkRun).order_by(BenchmarkRun.created_at.desc())
+    runs_query = filter_runs_query(participant, runs_query)
+    runs = session.exec(runs_query).all()
     total_runs = len(runs)
     run_mode_by_id: Dict[int, str] = {}
     for run in runs:

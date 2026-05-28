@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     default_temperature: float = 0.2
     default_max_tokens: int = 512
     exports_dir: str = "../data/exports"
+    workshop_mode: bool = False
+    workshop_admin_key: str = ""
 
     @property
     def cors_origins_list(self) -> List[str]:

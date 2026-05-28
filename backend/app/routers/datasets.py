@@ -19,6 +19,13 @@ from ..schemas.dataset import (
     ExampleRead,
 )
 from ..utils.jsonl import metadata_from_json, metadata_to_json, parse_jsonl
+from ..workshop import (
+    ParticipantContext,
+    filter_datasets_query,
+    get_dataset_or_404,
+    get_participant,
+    owner_key_for_create,
+)
 
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
@@ -68,14 +75,27 @@ def _example_to_read(example: DatasetExample) -> ExampleRead:
 
 
 @router.get("", response_model=List[DatasetRead])
-def list_datasets(session: Session = Depends(get_session)) -> List[DatasetRead]:
-    datasets = session.exec(select(Dataset).order_by(Dataset.created_at.desc())).all()
+def list_datasets(
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> List[DatasetRead]:
+    query = select(Dataset).order_by(Dataset.created_at.desc())
+    query = filter_datasets_query(participant, query)
+    datasets = session.exec(query).all()
     return [_to_dataset_read(session, d) for d in datasets]
 
 
 @router.post("", response_model=DatasetRead)
-def create_dataset(payload: DatasetCreate, session: Session = Depends(get_session)) -> DatasetRead:
-    dataset = Dataset(name=payload.name, description=payload.description)
+def create_dataset(
+    payload: DatasetCreate,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> DatasetRead:
+    dataset = Dataset(
+        name=payload.name,
+        description=payload.description,
+        owner_key=owner_key_for_create(participant),
+    )
     session.add(dataset)
     session.commit()
     session.refresh(dataset)
@@ -88,6 +108,7 @@ async def upload_dataset(
     name: Optional[str] = Form(default=None),
     description: Optional[str] = Form(default=None),
     session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
 ) -> DatasetUploadResponse:
     raw = await file.read()
     parse_result = parse_jsonl(raw)
@@ -101,7 +122,11 @@ async def upload_dataset(
         )
 
     dataset_name = name or (file.filename or "dataset").rsplit(".", 1)[0]
-    dataset = Dataset(name=dataset_name, description=description)
+    dataset = Dataset(
+        name=dataset_name,
+        description=description,
+        owner_key=owner_key_for_create(participant),
+    )
     session.add(dataset)
     session.commit()
     session.refresh(dataset)
@@ -129,10 +154,12 @@ async def upload_dataset(
 
 
 @router.get("/{dataset_id}", response_model=DatasetDetail)
-def get_dataset(dataset_id: int, session: Session = Depends(get_session)) -> DatasetDetail:
-    dataset = session.get(Dataset, dataset_id)
-    if dataset is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+def get_dataset(
+    dataset_id: int,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> DatasetDetail:
+    dataset = get_dataset_or_404(session, dataset_id, participant)
     examples = session.exec(
         select(DatasetExample).where(DatasetExample.dataset_id == dataset_id).order_by(DatasetExample.id)
     ).all()
@@ -144,10 +171,12 @@ def get_dataset(dataset_id: int, session: Session = Depends(get_session)) -> Dat
 
 
 @router.delete("/{dataset_id}")
-def delete_dataset(dataset_id: int, session: Session = Depends(get_session)) -> dict:
-    dataset = session.get(Dataset, dataset_id)
-    if dataset is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+def delete_dataset(
+    dataset_id: int,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> dict:
+    dataset = get_dataset_or_404(session, dataset_id, participant)
     examples = session.exec(select(DatasetExample).where(DatasetExample.dataset_id == dataset_id)).all()
     for example in examples:
         session.delete(example)
@@ -161,11 +190,9 @@ def add_example(
     dataset_id: int,
     payload: ExampleCreate,
     session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
 ) -> ExampleRead:
-    dataset = session.get(Dataset, dataset_id)
-    if dataset is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
+    get_dataset_or_404(session, dataset_id, participant)
     example = DatasetExample(
         dataset_id=dataset_id,
         external_id=payload.external_id,
@@ -186,7 +213,9 @@ def delete_example(
     dataset_id: int,
     example_id: int,
     session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
 ) -> dict:
+    get_dataset_or_404(session, dataset_id, participant)
     example = session.get(DatasetExample, example_id)
     if example is None or example.dataset_id != dataset_id:
         raise HTTPException(status_code=404, detail="Example not found")

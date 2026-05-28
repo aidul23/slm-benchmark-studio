@@ -16,6 +16,14 @@ from ..schemas.prompt_template import (
     PromptTemplateUpdate,
 )
 from ..services import prompt_renderer
+from ..workshop import (
+    ParticipantContext,
+    assert_can_mutate_prompt,
+    filter_prompts_query,
+    get_participant,
+    get_prompt_or_404,
+    owner_key_for_create,
+)
 
 
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
@@ -34,19 +42,29 @@ def _to_read(template: PromptTemplate) -> PromptTemplateRead:
 
 
 @router.get("", response_model=List[PromptTemplateRead])
-def list_prompts(session: Session = Depends(get_session)) -> List[PromptTemplateRead]:
-    items = session.exec(select(PromptTemplate).order_by(PromptTemplate.created_at.desc())).all()
+def list_prompts(
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> List[PromptTemplateRead]:
+    query = select(PromptTemplate).order_by(PromptTemplate.created_at.desc())
+    query = filter_prompts_query(participant, query)
+    items = session.exec(query).all()
     return [_to_read(t) for t in items]
 
 
 @router.post("", response_model=PromptTemplateRead)
-def create_prompt(payload: PromptTemplateCreate, session: Session = Depends(get_session)) -> PromptTemplateRead:
+def create_prompt(
+    payload: PromptTemplateCreate,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> PromptTemplateRead:
     template = PromptTemplate(
         name=payload.name,
         template=payload.template,
         system_prompt=payload.system_prompt,
         version=payload.version,
         notes=payload.notes,
+        owner_key=owner_key_for_create(participant),
     )
     session.add(template)
     session.commit()
@@ -55,10 +73,12 @@ def create_prompt(payload: PromptTemplateCreate, session: Session = Depends(get_
 
 
 @router.get("/{prompt_id}", response_model=PromptTemplateRead)
-def get_prompt(prompt_id: int, session: Session = Depends(get_session)) -> PromptTemplateRead:
-    template = session.get(PromptTemplate, prompt_id)
-    if template is None:
-        raise HTTPException(status_code=404, detail="Prompt template not found")
+def get_prompt(
+    prompt_id: int,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> PromptTemplateRead:
+    template = get_prompt_or_404(session, prompt_id, participant)
     return _to_read(template)
 
 
@@ -67,11 +87,10 @@ def update_prompt(
     prompt_id: int,
     payload: PromptTemplateUpdate,
     session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
 ) -> PromptTemplateRead:
-    template = session.get(PromptTemplate, prompt_id)
-    if template is None:
-        raise HTTPException(status_code=404, detail="Prompt template not found")
-
+    template = get_prompt_or_404(session, prompt_id, participant)
+    assert_can_mutate_prompt(template, participant)
     data = payload.model_dump(exclude_unset=True)
     for key, value in data.items():
         setattr(template, key, value)
@@ -82,10 +101,13 @@ def update_prompt(
 
 
 @router.delete("/{prompt_id}")
-def delete_prompt(prompt_id: int, session: Session = Depends(get_session)) -> dict:
-    template = session.get(PromptTemplate, prompt_id)
-    if template is None:
-        raise HTTPException(status_code=404, detail="Prompt template not found")
+def delete_prompt(
+    prompt_id: int,
+    session: Session = Depends(get_session),
+    participant: ParticipantContext = Depends(get_participant),
+) -> dict:
+    template = get_prompt_or_404(session, prompt_id, participant)
+    assert_can_mutate_prompt(template, participant)
     session.delete(template)
     session.commit()
     return {"ok": True}
