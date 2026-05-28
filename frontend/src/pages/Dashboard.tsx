@@ -179,6 +179,7 @@ export default function Dashboard() {
 const BENCHMARK_LABELS: Record<string, string> = {
   mmlu: "MMLU",
   hellaswag: "HellaSwag",
+  humaneval: "HumanEval",
 };
 
 function benchmarkLabel(key: string): string {

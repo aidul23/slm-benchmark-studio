@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     exports_dir: str = "../data/exports"
     workshop_mode: bool = False
     workshop_admin_key: str = ""
+    code_execution_timeout_seconds: float = 5.0
 
     @property
     def cors_origins_list(self) -> List[str]:
