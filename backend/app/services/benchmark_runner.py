@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from ..config import get_settings
 from ..database import session_scope
-from ..models.benchmark_run import BenchmarkRun, RunStatus
+from ..models.benchmark_run import BenchmarkRun, EvaluationMode, RunStatus, resolve_evaluation_mode
 from ..models.benchmark_score import BenchmarkScore
 from ..models.example import DatasetExample
 from ..models.judge_score import JudgeScore
@@ -114,6 +114,7 @@ class BenchmarkRunner:
                     judge_criteria = None
             judge_system_prompt = run.judge_system_prompt
             judge_user_template = run.judge_user_template
+            evaluation_mode = resolve_evaluation_mode(run)
             run_name = run.name
 
             template = session.get(PromptTemplate, run.prompt_template_id)
@@ -205,15 +206,10 @@ class BenchmarkRunner:
         finally:
             pbar.close()
 
-        # ---- Phase 3a: deterministic benchmark scoring (MMLU / HellaSwag / …).
-        # Runs whenever any example carries a `task_type` (e.g. "mcq") in its
-        # metadata — independent of whether an LLM judge is configured. This
-        # lets users evaluate against a structured benchmark without paying
-        # for any LLM-as-judge calls.
-        await self._run_benchmark_scoring_phase(run_id=run_id, examples=examples)
-
-        # ---- Phase 3b: optional LLM judge phase.
-        if judge_model:
+        # ---- Phase 3: scoring — exactly one path per run (benchmark OR judge).
+        if evaluation_mode == EvaluationMode.BENCHMARK:
+            await self._run_benchmark_scoring_phase(run_id=run_id, examples=examples)
+        elif evaluation_mode == EvaluationMode.JUDGE and judge_model:
             await self._run_judge_phase(
                 run_id=run_id,
                 judge_model=judge_model,

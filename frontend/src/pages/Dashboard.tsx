@@ -31,18 +31,28 @@ export default function Dashboard() {
 
       {data && (
         <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <Stat label="Datasets" value={data.total_datasets} />
             <Stat label="Runs" value={data.total_runs} />
             <Stat
-              label="Best model (overall)"
+              label="Best model (judge)"
               value={data.best_model_by_overall?.model_name ?? "—"}
               hint={
                 data.best_model_by_overall?.avg_overall != null
                   ? `Avg ${data.best_model_by_overall.avg_overall.toFixed(2)} / 5`
-                  : "Awaiting judge scores"
+                  : "No judge runs yet"
               }
               tone={data.best_model_by_overall ? "good" : "default"}
+            />
+            <Stat
+              label="Best model (benchmark)"
+              value={data.best_model_by_benchmark?.model_name ?? "—"}
+              hint={
+                data.best_model_by_benchmark?.benchmark_accuracy != null
+                  ? `${(data.best_model_by_benchmark.benchmark_accuracy * 100).toFixed(1)}% accuracy`
+                  : "No benchmark runs yet"
+              }
+              tone={data.best_model_by_benchmark ? "good" : "default"}
             />
             <Stat
               label="Fastest model"
@@ -84,54 +94,57 @@ export default function Dashboard() {
           )}
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <Card title="Average overall score by model" description="Across all completed runs">
+            <Card title="Judge · average overall score" description="LLM-as-judge runs only">
               {data.by_model.length === 0 ? (
-                <EmptyState title="No completed scores yet" description="Run a benchmark to populate this chart." />
+                <EmptyState title="No judge runs yet" description="Start an LLM-as-judge run to populate this chart." />
               ) : (
                 <ScoreBarChart data={data.by_model} metric="avg_overall" label="Overall" />
               )}
             </Card>
-            <Card title="Average latency by model" description="Lower is better">
-              {data.by_model.length === 0 ? (
+            <Card title="Average latency by model" description="All runs — generation phase">
+              {data.all_models.length === 0 ? (
                 <EmptyState title="No latency data yet" description="Latency is captured during the generation phase." />
               ) : (
-                <LatencyBarChart data={data.by_model} />
+                <LatencyBarChart data={data.all_models} />
               )}
             </Card>
           </div>
 
           <Card title="Recent runs" description="The latest benchmark sessions">
-            {data.recent_runs.length === 0 ? (
-              <EmptyState
-                title="No runs yet"
-                description="Head to Runs to configure your first benchmark."
-                action={
-                  <Link
-                    to="/runs"
-                    className="text-sm font-medium text-accent-600 hover:text-accent-700"
-                  >
-                    Create a run →
-                  </Link>
-                }
-              />
-            ) : (
-              <ul className="divide-y divide-ink-100">
-                {data.recent_runs.map((run) => {
-                  const pct = run.progress_total
-                    ? Math.min(100, (run.progress_done / run.progress_total) * 100)
-                    : 0;
-                  return (
-                    <li key={run.id} className="flex items-center justify-between gap-4 py-3">
-                      <div className="min-w-0 flex-1">
-                        <Link
-                          to={`/runs/${run.id}`}
-                          className="text-sm font-medium text-ink-800 hover:text-accent-700"
-                        >
-                          {run.name}
-                        </Link>
-                        <div className="text-xs text-ink-500">
-                          {run.created_at ? new Date(run.created_at).toLocaleString() : "—"}
-                        </div>
+              {data.recent_runs.length === 0 ? (
+                <EmptyState
+                  title="No runs yet"
+                  description="Head to Runs to configure your first evaluation."
+                  action={
+                    <Link
+                      to="/runs"
+                      className="text-sm font-medium text-accent-600 hover:text-accent-700"
+                    >
+                      Create a run →
+                    </Link>
+                  }
+                />
+              ) : (
+                <ul className="divide-y divide-ink-100">
+                  {data.recent_runs.map((run) => {
+                    const pct = run.progress_total
+                      ? Math.min(100, (run.progress_done / run.progress_total) * 100)
+                      : 0;
+                    return (
+                      <li key={run.id} className="flex items-center justify-between gap-4 py-3">
+                        <div className="min-w-0 flex-1">
+                          <Link
+                            to={`/runs/${run.id}`}
+                            className="text-sm font-medium text-ink-800 hover:text-accent-700"
+                          >
+                            {run.name}
+                          </Link>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-ink-500">
+                            <span>{run.created_at ? new Date(run.created_at).toLocaleString() : "—"}</span>
+                            <Badge tone={run.evaluation_mode === "benchmark" ? "info" : "neutral"}>
+                              {run.evaluation_mode === "benchmark" ? "Benchmark" : "Judge"}
+                            </Badge>
+                          </div>
                         <div className="mt-1 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-ink-100">
                           <div
                             className={

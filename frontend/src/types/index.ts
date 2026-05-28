@@ -1,5 +1,7 @@
 export type RunStatus = "pending" | "running" | "completed" | "failed";
 
+export type EvaluationMode = "benchmark" | "judge";
+
 export interface OllamaModel {
   name: string;
   size?: number | null;
@@ -19,6 +21,7 @@ export interface Dataset {
   description?: string | null;
   created_at: string;
   example_count: number;
+  kind: "benchmark" | "general";
 }
 
 export interface DatasetExample {
@@ -102,6 +105,7 @@ export interface BenchmarkRun {
   dataset_id: number;
   prompt_template_id: number;
   selected_models: string[];
+  evaluation_mode: EvaluationMode;
   judge_model?: string | null;
   judge_provider: JudgeProviderKey;
   judge_criteria: JudgeCriterionKey[];
@@ -256,6 +260,7 @@ export interface InsightsOverview {
     id: number;
     name: string;
     status: RunStatus;
+    evaluation_mode?: EvaluationMode;
     created_at: string | null;
     progress_done: number;
     progress_total: number;
@@ -263,6 +268,8 @@ export interface InsightsOverview {
   by_model: ModelSummary[];
   benchmarks: BenchmarkBreakdown[];
   benchmark_by_model: BenchmarkModelStat[];
+  benchmark_models: ModelSummary[];
+  all_models: ModelSummary[];
 }
 
 export interface RunCreatePayload {
@@ -270,6 +277,7 @@ export interface RunCreatePayload {
   dataset_id: number;
   prompt_template_id: number;
   selected_models: string[];
+  evaluation_mode: EvaluationMode;
   judge_model?: string | null;
   judge_provider?: JudgeProviderKey;
   judge_criteria?: JudgeCriterionKey[] | null;

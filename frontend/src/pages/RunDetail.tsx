@@ -26,7 +26,7 @@ import {
 } from "../components/ui";
 import { useToast } from "../components/Toast";
 import { useAsync } from "../hooks/useAsync";
-import type { BenchmarkBreakdown, JudgeProviderInfo, ResultRow, RunSummary } from "../types";
+import type { BenchmarkBreakdown, EvaluationMode, JudgeProviderInfo, ResultRow, RunSummary } from "../types";
 import ScoreBarChart from "../components/charts/ScoreBarChart";
 import LatencyBarChart from "../components/charts/LatencyBarChart";
 import BenchmarkAccuracyBarChart from "../components/charts/BenchmarkAccuracyBarChart";
@@ -35,6 +35,12 @@ import BenchmarkBreakdownStacked from "../components/charts/BenchmarkBreakdownSt
 import SubjectAccuracyBarChart from "../components/charts/SubjectAccuracyBarChart";
 import AccuracyLatencyScatter from "../components/charts/AccuracyLatencyScatter";
 import ProgressPanel from "../components/ProgressPanel";
+import ModelLabel from "../components/ModelLabel";
+
+function resolveEvaluationMode(run: { evaluation_mode?: EvaluationMode; judge_model?: string | null }): EvaluationMode {
+  if (run.evaluation_mode) return run.evaluation_mode;
+  return run.judge_model ? "judge" : "benchmark";
+}
 
 export default function RunDetail() {
   const params = useParams();
@@ -48,11 +54,12 @@ export default function RunDetail() {
 
   async function handleStart() {
     if (!run.data) return;
+    const mode = resolveEvaluationMode(run.data);
     const provider: JudgeProviderInfo | undefined = providers.data?.find(
       (p) => p.key === run.data?.judge_provider,
     );
     let apiKey: string | null = null;
-    if (run.data.judge_model && provider?.requires_api_key) {
+    if (mode === "judge" && run.data.judge_model && provider?.requires_api_key) {
       apiKey = getJudgeKey(run.data.judge_provider) || null;
       if (!apiKey) {
         toast.error(
@@ -137,10 +144,10 @@ export default function RunDetail() {
     });
   }, [results.data, modelFilter, categoryFilter, difficultyFilter, lowScoreOnly, search]);
 
-  const hasBenchmark = useMemo(
-    () => (results.data ?? []).some((row) => row.benchmark != null),
-    [results.data],
-  );
+  const evaluationMode = run.data ? resolveEvaluationMode(run.data) : "judge";
+  const isJudgeMode = evaluationMode === "judge";
+  const isBenchmarkMode = evaluationMode === "benchmark";
+
   const bestBenchmarkModel = useMemo(() => {
     if (!summary.data) return null;
     const ranked = summary.data.by_model
@@ -159,7 +166,10 @@ export default function RunDetail() {
           <h1 className="mt-2 text-2xl font-semibold text-ink-900">{run.data?.name ?? "Run"}</h1>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-ink-500">
             {run.data && <StatusBadge status={run.data.status} />}
-            {run.data?.judge_model && (
+            <Badge tone={isBenchmarkMode ? "info" : "neutral"}>
+              {isBenchmarkMode ? "Benchmark evaluation" : "LLM-as-judge"}
+            </Badge>
+            {isJudgeMode && run.data?.judge_model && (
               <Badge tone="neutral">
                 judge: {run.data.judge_model}
                 {run.data.judge_provider && run.data.judge_provider !== "ollama" && (
@@ -169,7 +179,7 @@ export default function RunDetail() {
                 )}
               </Badge>
             )}
-            {run.data?.judge_model && run.data?.judge_criteria && (
+            {isJudgeMode && run.data?.judge_model && run.data?.judge_criteria && (
               <Badge tone="info">
                 rubric: {run.data.judge_criteria.length}/5 criteria
                 {(run.data.judge_system_prompt || run.data.judge_user_template) && (
@@ -181,7 +191,7 @@ export default function RunDetail() {
             )}
             {run.data?.selected_models.map((model) => (
               <Badge key={model} tone="info">
-                {model}
+                <ModelLabel name={model} layout="inline" nameClassName="font-mono text-xs" />
               </Badge>
             ))}
           </div>
@@ -231,7 +241,7 @@ export default function RunDetail() {
       {run.data && (
         <div
           className={`grid grid-cols-1 gap-4 ${
-            hasBenchmark ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3"
+            isBenchmarkMode ? "sm:grid-cols-3" : "sm:grid-cols-3"
           }`}
         >
           <Stat label="Examples" value={summary.data?.total_examples ?? "—"} />
@@ -240,17 +250,18 @@ export default function RunDetail() {
             value={summary.data?.total_outputs ?? "—"}
             hint="Across all models"
           />
-          <Stat
-            label="Best avg overall"
-            value={summary.data?.by_model[0]?.model_name ?? "—"}
-            hint={
-              summary.data?.by_model[0]?.avg_overall != null
-                ? `${summary.data.by_model[0].avg_overall.toFixed(2)} / 5`
-                : "Awaiting judge"
-            }
-            tone={summary.data?.by_model[0]?.avg_overall ? "good" : "default"}
-          />
-          {hasBenchmark && (
+          {isJudgeMode ? (
+            <Stat
+              label="Best avg overall"
+              value={summary.data?.by_model[0]?.model_name ?? "—"}
+              hint={
+                summary.data?.by_model[0]?.avg_overall != null
+                  ? `${summary.data.by_model[0].avg_overall.toFixed(2)} / 5`
+                  : "Awaiting judge"
+              }
+              tone={summary.data?.by_model[0]?.avg_overall ? "good" : "default"}
+            />
+          ) : (
             <Stat
               label="Best benchmark accuracy"
               value={bestBenchmarkModel?.model_name ?? "—"}
@@ -265,7 +276,7 @@ export default function RunDetail() {
         </div>
       )}
 
-      {summary.data && summary.data.by_model.length > 0 && (
+      {isJudgeMode && summary.data && summary.data.by_model.length > 0 && (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <Card title="Average overall score" description="LLM judge rubric (1–5)">
             <ScoreBarChart data={summary.data.by_model} metric="avg_overall" label="Overall" />
@@ -276,8 +287,20 @@ export default function RunDetail() {
         </div>
       )}
 
-      {summary.data && summary.data.benchmarks.length > 0 && (
+      {isBenchmarkMode && summary.data && summary.data.benchmarks.length > 0 && (
         <BenchmarkScoringSection summary={summary.data} />
+      )}
+
+      {isBenchmarkMode && summary.data && summary.data.by_model.length > 0 && summary.data.benchmarks.length === 0 && (
+        <Card title="Benchmark scoring">
+          <EmptyState title="No benchmark scores yet" description="Scores appear after generation completes." />
+        </Card>
+      )}
+
+      {isBenchmarkMode && summary.data && summary.data.by_model.length > 0 && (
+        <Card title="Latency" description="Generation phase — lower is better">
+          <LatencyBarChart data={summary.data.by_model} />
+        </Card>
       )}
 
       <Card
@@ -321,15 +344,17 @@ export default function RunDetail() {
                 </option>
               ))}
             </Select>
-            <label className="inline-flex items-center gap-2 text-sm text-ink-700">
-              <input
-                type="checkbox"
-                checked={lowScoreOnly}
-                onChange={(event) => setLowScoreOnly(event.target.checked)}
-                className="h-4 w-4 rounded border-ink-300"
-              />
-              Low score only (≤ 3)
-            </label>
+            {isJudgeMode && (
+              <label className="inline-flex items-center gap-2 text-sm text-ink-700">
+                <input
+                  type="checkbox"
+                  checked={lowScoreOnly}
+                  onChange={(event) => setLowScoreOnly(event.target.checked)}
+                  className="h-4 w-4 rounded border-ink-300"
+                />
+                Low score only (≤ 3)
+              </label>
+            )}
             <Input
               placeholder="Search input/output..."
               value={search}
@@ -351,8 +376,8 @@ export default function RunDetail() {
                 <tr>
                   <th className="px-2 py-2">Example</th>
                   <th className="px-2 py-2">Model</th>
-                  <th className="px-2 py-2">Overall</th>
-                  {hasBenchmark && <th className="px-2 py-2">Benchmark</th>}
+                  {isJudgeMode && <th className="px-2 py-2">Overall</th>}
+                  {isBenchmarkMode && <th className="px-2 py-2">Benchmark</th>}
                   <th className="px-2 py-2">Latency</th>
                   <th className="px-2 py-2">Tokens/s</th>
                   <th className="px-2 py-2">Status</th>
@@ -377,7 +402,10 @@ export default function RunDetail() {
                           {row.difficulty && <Badge tone="warning">{row.difficulty}</Badge>}
                         </div>
                       </td>
-                      <td className="px-2 py-3 font-mono text-xs text-ink-700">{row.model_name}</td>
+                      <td className="px-2 py-3 font-mono text-xs text-ink-700">
+                        <ModelLabel name={row.model_name} align="start" nameClassName="text-xs" />
+                      </td>
+                      {isJudgeMode && (
                       <td className="px-2 py-3">
                         {overall != null ? (
                           <Badge tone={overallTone}>{overall.toFixed(2)}</Badge>
@@ -387,7 +415,8 @@ export default function RunDetail() {
                           <Badge tone="neutral">—</Badge>
                         )}
                       </td>
-                      {hasBenchmark && (
+                      )}
+                      {isBenchmarkMode && (
                         <td className="px-2 py-3">
                           {benchmark?.is_correct === true ? (
                             <Badge tone="good">
@@ -436,6 +465,7 @@ export default function RunDetail() {
       {active && (
         <ResultModal
           row={active}
+          evaluationMode={evaluationMode}
           onClose={() => setActive(null)}
           onReviewSaved={() => {
             void results.reload();
@@ -449,11 +479,12 @@ export default function RunDetail() {
 
 interface ResultModalProps {
   row: ResultRow;
+  evaluationMode: EvaluationMode;
   onClose: () => void;
   onReviewSaved: () => void;
 }
 
-function ResultModal({ row, onClose, onReviewSaved }: ResultModalProps) {
+function ResultModal({ row, evaluationMode, onClose, onReviewSaved }: ResultModalProps) {
   const [humanScore, setHumanScore] = useState<string>(
     row.judge?.human_score != null ? String(row.judge.human_score) : "",
   );
@@ -505,7 +536,7 @@ function ResultModal({ row, onClose, onReviewSaved }: ResultModalProps) {
             <Section title="Rendered prompt" body={row.rendered_prompt} mono />
           )}
 
-          {row.judge && (
+          {evaluationMode === "judge" && row.judge && (
             <div className="rounded-xl border border-ink-100 bg-ink-50 p-4">
               <div className="mb-3 text-xs font-medium uppercase tracking-wide text-ink-500">
                 Judge ({row.judge.judge_model ?? "n/a"})
@@ -528,7 +559,7 @@ function ResultModal({ row, onClose, onReviewSaved }: ResultModalProps) {
             </div>
           )}
 
-          {row.benchmark && (
+          {evaluationMode === "benchmark" && row.benchmark && (
             <div className="rounded-xl border border-ink-100 bg-ink-50 p-4">
               <div className="mb-3 flex items-center justify-between text-xs font-medium uppercase tracking-wide text-ink-500">
                 <span>
@@ -557,6 +588,7 @@ function ResultModal({ row, onClose, onReviewSaved }: ResultModalProps) {
             </div>
           )}
 
+          {evaluationMode === "judge" && (
           <div className="rounded-xl border border-ink-100 bg-white p-4">
             <div className="mb-3 text-xs font-medium uppercase tracking-wide text-ink-500">
               Human review
@@ -599,6 +631,7 @@ function ResultModal({ row, onClose, onReviewSaved }: ResultModalProps) {
               </Button>
             </div>
           </div>
+          )}
         </div>
       </div>
     </div>
@@ -688,7 +721,7 @@ function BenchmarkScoringSection({ summary }: { summary: RunSummary }) {
     <div className="space-y-6">
       <Card
         title="Benchmark scoring"
-        description="Deterministic A/B/C/D scoring against the gold answer — independent of the LLM judge."
+        description="Deterministic A/B/C/D scoring against the gold answer."
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
           {benchmarks.map((bench) => (

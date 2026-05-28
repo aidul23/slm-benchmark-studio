@@ -22,8 +22,10 @@ import {
   Textarea,
 } from "../components/ui";
 import { useToast } from "../components/Toast";
+import ModelLabel from "../components/ModelLabel";
 import { useAsync } from "../hooks/useAsync";
 import type {
+  EvaluationMode,
   JudgeCriterionKey,
   JudgeProviderInfo,
   JudgeProviderKey,
@@ -33,6 +35,7 @@ import type {
 
 interface RunFormState {
   name: string;
+  evaluation_mode: EvaluationMode;
   dataset_id: number | null;
   prompt_template_id: number | null;
   judge_provider: JudgeProviderKey;
@@ -61,6 +64,7 @@ const MIN_CRITERIA = 2;
 
 const defaultForm: RunFormState = {
   name: "",
+  evaluation_mode: "judge",
   dataset_id: null,
   prompt_template_id: null,
   judge_provider: "ollama",
@@ -111,6 +115,15 @@ export default function Runs() {
   const [keyState, setKeyState] = useState<"empty" | "checking" | "verified" | "error">("empty");
   const [validating, setValidating] = useState(false);
 
+  const isJudgeMode = form.evaluation_mode === "judge";
+  const isBenchmarkMode = form.evaluation_mode === "benchmark";
+
+  const availableDatasets = useMemo(() => {
+    const all = datasets.data ?? [];
+    if (isBenchmarkMode) return all.filter((d) => d.kind === "benchmark");
+    return all.filter((d) => d.kind === "general");
+  }, [datasets.data, isBenchmarkMode]);
+
   const generatorModels = useMemo(() => localModels.data?.models ?? [], [localModels.data]);
 
   const selectedProvider = useMemo<JudgeProviderInfo | undefined>(
@@ -134,6 +147,17 @@ export default function Runs() {
     () => (runs.data ?? []).some((r) => r.status === "running" || r.status === "pending"),
     [runs.data],
   );
+
+  useEffect(() => {
+    if (!form.dataset_id || !datasets.data) return;
+    const ds = datasets.data.find((d) => d.id === form.dataset_id);
+    if (!ds) return;
+    const compatible =
+      (isBenchmarkMode && ds.kind === "benchmark") || (isJudgeMode && ds.kind === "general");
+    if (!compatible) {
+      setForm((prev) => ({ ...prev, dataset_id: null }));
+    }
+  }, [form.dataset_id, form.evaluation_mode, datasets.data, isBenchmarkMode, isJudgeMode]);
 
   useEffect(() => {
     if (!hasActiveRun) return;
@@ -283,13 +307,17 @@ export default function Runs() {
       setSubmitError("Pick a dataset, prompt template, and at least one model.");
       return;
     }
-    if (form.judge_model && requiresKey && keyState !== "verified") {
+    if (isJudgeMode && !form.judge_model) {
+      setSubmitError("Select a judge model for LLM-as-judge evaluation.");
+      return;
+    }
+    if (isJudgeMode && requiresKey && keyState !== "verified") {
       setSubmitError(
         `Validate your ${selectedProvider?.name ?? "judge"} API key with "Test & load models" before starting the run.`,
       );
       return;
     }
-    if (form.judge_model && form.judge_criteria.length < MIN_CRITERIA) {
+    if (isJudgeMode && form.judge_criteria.length < MIN_CRITERIA) {
       setSubmitError(`Select at least ${MIN_CRITERIA} criteria for the judge to score.`);
       return;
     }
@@ -315,14 +343,15 @@ export default function Runs() {
 
     const payload: RunCreatePayload = {
       name: form.name || `Run ${new Date().toLocaleString()}`,
+      evaluation_mode: form.evaluation_mode,
       dataset_id: form.dataset_id,
       prompt_template_id: form.prompt_template_id,
       selected_models: form.selected_models,
-      judge_model: form.judge_model || null,
-      judge_provider: form.judge_provider,
-      judge_criteria: judgeCriteriaPayload,
-      judge_system_prompt: systemPromptOverride,
-      judge_user_template: userTemplateOverride,
+      judge_model: isJudgeMode ? form.judge_model || null : null,
+      judge_provider: isJudgeMode ? form.judge_provider : "ollama",
+      judge_criteria: isJudgeMode ? judgeCriteriaPayload : null,
+      judge_system_prompt: isJudgeMode ? systemPromptOverride : null,
+      judge_user_template: isJudgeMode ? userTemplateOverride : null,
       temperature: form.temperature,
       max_tokens: form.max_tokens,
       repeats: form.repeats,
@@ -333,13 +362,14 @@ export default function Runs() {
     try {
       const created = await createRun(payload);
       await startRun(created.id, {
-        judge_api_key: form.judge_model && requiresKey ? apiKey.trim() : null,
+        judge_api_key: isJudgeMode && requiresKey ? apiKey.trim() : null,
       });
       toast.success(`Run "${created.name}" started.`);
       // Preserve rubric + prompt edits so the user can immediately spin up a
       // sibling run without re-configuring; clear only the per-run inputs.
       setForm((prev) => ({
         ...defaultForm,
+        evaluation_mode: prev.evaluation_mode,
         judge_provider: prev.judge_provider,
         judge_criteria: prev.judge_criteria,
         judge_system_prompt: prev.judge_system_prompt,
@@ -366,10 +396,16 @@ export default function Runs() {
     }
   }
 
-  async function handleRestart(run: { id: number; judge_model?: string | null; judge_provider: JudgeProviderKey }) {
+  async function handleRestart(run: {
+    id: number;
+    evaluation_mode?: EvaluationMode;
+    judge_model?: string | null;
+    judge_provider: JudgeProviderKey;
+  }) {
+    const isJudge = (run.evaluation_mode ?? (run.judge_model ? "judge" : "benchmark")) === "judge";
     const providerInfo = providers.data?.find((p) => p.key === run.judge_provider);
     let key: string | null = null;
-    if (run.judge_model && providerInfo?.requires_api_key) {
+    if (isJudge && run.judge_model && providerInfo?.requires_api_key) {
       key = getJudgeKey(run.judge_provider) || null;
       if (!key) {
         toast.error(
@@ -394,7 +430,7 @@ export default function Runs() {
         <div>
           <h1 className="text-2xl font-semibold text-ink-900">Benchmark runs</h1>
           <p className="mt-1 text-sm text-ink-500">
-            Configure the dataset, prompt, models, and judge, then launch the loop.
+            Choose benchmark scoring (MMLU/HellaSwag) or LLM-as-judge — one evaluation path per run.
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={() => void refreshAll()}>
@@ -402,8 +438,54 @@ export default function Runs() {
         </Button>
       </div>
 
-      <Card title="New run" description="Each run pairs a dataset and prompt with one or more generator models and an optional judge.">
+      <Card
+        title="New run"
+        description="Pick an evaluation mode first — benchmark and judge runs use different datasets and produce separate results."
+      >
         <form onSubmit={handleCreate} className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <div className="mb-1 text-sm font-medium text-ink-700">Evaluation mode</div>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  {
+                    key: "benchmark" as EvaluationMode,
+                    label: "Standard benchmark",
+                    hint: "MMLU, HellaSwag — deterministic A/B/C/D accuracy",
+                  },
+                  {
+                    key: "judge" as EvaluationMode,
+                    label: "LLM as judge",
+                    hint: "Custom dataset — rubric scores from a judge model",
+                  },
+                ] as const
+              ).map((option) => {
+                const active = form.evaluation_mode === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() =>
+                      setForm((prev) => ({
+                        ...prev,
+                        evaluation_mode: option.key,
+                        dataset_id: null,
+                      }))
+                    }
+                    className={
+                      active
+                        ? "flex min-w-[12rem] flex-1 flex-col rounded-xl border-2 border-accent-600 bg-accent-50 px-4 py-3 text-left shadow-sm"
+                        : "flex min-w-[12rem] flex-1 flex-col rounded-xl border border-ink-200 bg-white px-4 py-3 text-left hover:bg-ink-50"
+                    }
+                  >
+                    <span className="text-sm font-semibold text-ink-900">{option.label}</span>
+                    <span className="mt-0.5 text-xs text-ink-500">{option.hint}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <Input
             label="Run name"
             value={form.name}
@@ -411,7 +493,7 @@ export default function Runs() {
             placeholder="Auto-generated if empty"
           />
           <Select
-            label="Dataset"
+            label={isBenchmarkMode ? "Benchmark dataset" : "Dataset"}
             value={form.dataset_id ?? ""}
             onChange={(event) =>
               setForm((prev) => ({
@@ -419,9 +501,20 @@ export default function Runs() {
                 dataset_id: event.target.value ? Number(event.target.value) : null,
               }))
             }
+            hint={
+              isBenchmarkMode
+                ? "Only datasets imported from MMLU/HellaSwag appear here."
+                : "Upload JSONL on the Datasets page — benchmark imports are excluded."
+            }
           >
-            <option value="">Choose dataset...</option>
-            {datasets.data?.map((dataset) => (
+            <option value="">
+              {availableDatasets.length === 0
+                ? isBenchmarkMode
+                  ? "No benchmark datasets — import from Datasets"
+                  : "No general datasets — upload JSONL"
+                : "Choose dataset..."}
+            </option>
+            {availableDatasets.map((dataset) => (
               <option key={dataset.id} value={dataset.id}>
                 {dataset.name} ({dataset.example_count} examples)
               </option>
@@ -446,6 +539,8 @@ export default function Runs() {
             ))}
           </Select>
 
+          {isJudgeMode && (
+            <>
           <Select
             label="Judge provider"
             value={form.judge_provider}
@@ -465,7 +560,7 @@ export default function Runs() {
           </Select>
 
           <Select
-            label="Judge model (optional but recommended)"
+            label="Judge model"
             value={form.judge_model}
             onChange={(event) => setForm((prev) => ({ ...prev, judge_model: event.target.value }))}
             hint={
@@ -477,7 +572,7 @@ export default function Runs() {
             }
             disabled={!isLocalJudge && keyState !== "verified"}
           >
-            <option value="">No judge (generation only)</option>
+            <option value="">Choose judge model…</option>
             {judgeModelOptions.map((model) => (
               <option key={model.id} value={model.id}>
                 {model.name}
@@ -679,6 +774,8 @@ export default function Runs() {
               </details>
             </div>
           )}
+            </>
+          )}
 
           <Input
             label="Temperature"
@@ -719,11 +816,15 @@ export default function Runs() {
                       onClick={() => toggleModel(model.name)}
                       className={
                         active
-                          ? "rounded-lg bg-accent-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm"
-                          : "rounded-lg border border-ink-200 bg-ink-50 px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-ink-100"
+                          ? "rounded-lg bg-accent-600 px-3 py-2 text-sm font-medium text-white shadow-sm"
+                          : "rounded-lg border border-ink-200 bg-ink-50 px-3 py-2 text-sm font-medium text-ink-700 hover:bg-ink-100"
                       }
                     >
-                      {model.name}
+                      <ModelLabel
+                        name={model.name}
+                        nameClassName={active ? "text-white" : undefined}
+                        providerClassName={active ? "text-white/75" : undefined}
+                      />
                     </button>
                   );
                 })
@@ -768,6 +869,7 @@ export default function Runs() {
             <thead className="text-left text-xs uppercase text-ink-400">
               <tr>
                 <th className="px-2 py-2">Name</th>
+                <th className="px-2 py-2">Mode</th>
                 <th className="px-2 py-2">Models</th>
                 <th className="px-2 py-2">Judge</th>
                 <th className="px-2 py-2">Status</th>
@@ -787,10 +889,15 @@ export default function Runs() {
                     </div>
                   </td>
                   <td className="px-2 py-3">
+                    <Badge tone={run.evaluation_mode === "benchmark" ? "info" : "neutral"}>
+                      {run.evaluation_mode === "benchmark" ? "Benchmark" : "Judge"}
+                    </Badge>
+                  </td>
+                  <td className="px-2 py-3">
                     <div className="flex flex-wrap gap-1">
                       {run.selected_models.map((model) => (
                         <Badge key={model} tone="info">
-                          {model}
+                          <ModelLabel name={model} layout="inline" nameClassName="font-mono text-xs" />
                         </Badge>
                       ))}
                     </div>

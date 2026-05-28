@@ -1,4 +1,5 @@
 import { listOllamaModels } from "../api/models";
+import ModelLabel from "../components/ModelLabel";
 import { Badge, Card, EmptyState, ErrorState, LoadingState } from "../components/ui";
 import { useAsync } from "../hooks/useAsync";
 
@@ -70,7 +71,9 @@ ollama pull qwen2.5:3b`}
                 const details = (model.details ?? {}) as Record<string, unknown>;
                 return (
                   <tr key={model.name}>
-                    <td className="px-2 py-3 font-mono text-sm text-ink-800">{model.name}</td>
+                    <td className="px-2 py-3">
+                      <ModelLabel name={model.name} align="start" />
+                    </td>
                     <td className="px-2 py-3 text-ink-600">{formatSize(model.size)}</td>
                     <td className="px-2 py-3 text-xs text-ink-500">
                       {model.modified_at ? new Date(model.modified_at).toLocaleString() : "—"}

@@ -18,14 +18,14 @@ interface Props {
 }
 
 /**
- * Horizontal-ish bar chart of accuracy per subject inside one benchmark.
- * Useful for MMLU where each subject is a meaningful slice; also works for
- * HellaSwag's activity labels but is less informative there.
+ * Horizontal bar chart of accuracy per subject inside one benchmark.
  *
  * Bars are colored by accuracy band (green ≥ 60%, amber 30–60%, red < 30%).
- * 0%-accuracy subjects are rendered with a small visible stub (`minPointSize`)
- * so they don't silently disappear, and every all-wrong subject is guaranteed
- * a slot in the bottom slice (never trimmed by the head+tail cap).
+ * 0%-accuracy subjects use `minPointSize` so wrong-only rows still show a
+ * visible red stub (recharts otherwise draws zero-width bars at 0%).
+ * Every all-wrong subject is kept in the bottom slice even when there are
+ * more than limit/2 of them — important for HellaSwag where many activities
+ * have only 1 example (0/1 = 0%).
  */
 export default function SubjectAccuracyBarChart({ data, limit = 20 }: Props) {
   if (data.length === 0) {
@@ -40,9 +40,6 @@ export default function SubjectAccuracyBarChart({ data, limit = 20 }: Props) {
   ordered.sort((a, b) => (b.accuracy ?? 0) - (a.accuracy ?? 0));
   const total = ordered.length;
 
-  // Head + tail slicing, but: always keep every 0%-accuracy subject in the
-  // bottom (those are the most useful "weakness" signal — silently dropping
-  // them hides real failures, e.g. HellaSwag activities with 0/1 correct).
   let shown: BenchmarkSubjectBreakdown[];
   let topCount = 0;
   let bottomCount = 0;
@@ -68,9 +65,6 @@ export default function SubjectAccuracyBarChart({ data, limit = 20 }: Props) {
   const colorFor = (pct: number) => (pct >= 60 ? "#10b981" : pct >= 30 ? "#f59e0b" : "#ef4444");
 
   const hidden = total - shown.length;
-  // Grow the chart vertically when many bars are shown so labels and bars
-  // don't get squished together. ~22px per bar with a 384px floor matches
-  // the previous `h-96` baseline.
   const chartHeight = Math.max(384, points.length * 22);
 
   return (
@@ -117,8 +111,9 @@ export default function SubjectAccuracyBarChart({ data, limit = 20 }: Props) {
         {hidden > 0 ? (
           <>
             Showing {points.length} of {total} subjects · top {topCount} + bottom {bottomCount}
-            {hidden > 0 ? ` · ${hidden} mid-range hidden` : ""}. 0%-accuracy subjects
-            are always kept and rendered as a thin red stub.
+            {" · "}
+            {hidden} mid-range hidden. 0%-accuracy subjects are always kept and shown as a thin red
+            stub.
           </>
         ) : (
           <>Showing all {total} subjects. 0%-accuracy bars appear as a thin red stub.</>
